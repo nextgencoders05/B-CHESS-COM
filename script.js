@@ -465,6 +465,7 @@ function escapeHtml(str) {
 let pendingRemoteCandidates = [];
 let remoteDescriptionReady = false;
 let isSpeakerMuted = false;
+let remoteVoiceStream = null;
 
 async function addRemoteIceCandidate(candidate) {
   if (!peerConnection || !candidate) return;
@@ -511,6 +512,7 @@ async function startVoiceChat(roomId, isCaller) {
     // Clean state for a new room connection.
     pendingRemoteCandidates = [];
     remoteDescriptionReady = false;
+    remoteVoiceStream = null;
     peerConnection = new RTCPeerConnection(rtcConfig);
 
     // Reserve the audio media section BEFORE creating the offer/answer.
@@ -519,18 +521,38 @@ async function startVoiceChat(roomId, isCaller) {
 
     peerConnection.onconnectionstatechange = () => {
       console.log("Voice connection state:", peerConnection.connectionState);
+      if (peerConnection.connectionState === "connected") {
+        const audio = document.getElementById("remoteAudio");
+        if (audio && !isSpeakerMuted) audio.play().catch(() => {});
+      }
     };
 
     peerConnection.ontrack = (event) => {
       const audio = document.getElementById("remoteAudio");
       if (!audio) return;
-      const stream = event.streams && event.streams[0]
-        ? event.streams[0]
-        : new MediaStream([event.track]);
-      audio.srcObject = stream;
+
+      // Keep one persistent remote MediaStream. Some browsers fire separate
+      // track events for the same peer and replacing srcObject can interrupt
+      // playback, especially for the room creator.
+      if (event.streams && event.streams[0]) {
+        remoteVoiceStream = event.streams[0];
+      } else {
+        if (!remoteVoiceStream) remoteVoiceStream = new MediaStream();
+        const alreadyAdded = remoteVoiceStream.getTracks().some(t => t.id === event.track.id);
+        if (!alreadyAdded) remoteVoiceStream.addTrack(event.track);
+      }
+
+      audio.autoplay = true;
+      audio.playsInline = true;
+      audio.srcObject = remoteVoiceStream;
       audio.muted = isSpeakerMuted;
       audio.volume = isSpeakerMuted ? 0 : 1;
-      audio.play().catch(e => console.log("Voice audio waiting for speaker interaction:", e));
+      audio.load();
+      audio.play().then(() => {
+        console.log("Remote voice playback started");
+      }).catch(e => {
+        console.log("Remote voice playback needs speaker interaction:", e);
+      });
     };
 
     const voiceRef = database.ref("rooms/" + roomId + "/voice");
@@ -607,6 +629,7 @@ async function toggleMicrophone() {
       if (!track) throw new Error("No microphone audio track was created.");
 
       if (audioTransceiver) {
+        audioTransceiver.direction = "sendrecv";
         await audioTransceiver.sender.replaceTrack(track);
       } else if (peerConnection) {
         peerConnection.addTrack(track, localVoiceStream);
@@ -642,9 +665,21 @@ async function toggleMicrophone() {
 async function toggleSpeaker() {
   const audio = document.getElementById("remoteAudio");
   if (!audio) return;
-  setSpeakerState(!isSpeakerMuted);
-  if (!isSpeakerMuted) {
-    try { await audio.play(); } catch (err) { console.log("Speaker playback waiting:", err); }
+
+  const nextMuted = !isSpeakerMuted;
+  setSpeakerState(nextMuted);
+
+  if (!nextMuted) {
+    try {
+      audio.muted = false;
+      audio.volume = 1;
+      if (remoteVoiceStream && audio.srcObject !== remoteVoiceStream) {
+        audio.srcObject = remoteVoiceStream;
+      }
+      await audio.play();
+    } catch (err) {
+      console.log("Speaker playback waiting:", err);
+    }
   }
 }
 
