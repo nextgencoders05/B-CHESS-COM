@@ -462,19 +462,24 @@ function escapeHtml(str) {
 }
 
 // --- WEBRTC LIVE VOICE CHAT ---
+// Voice uses one initial WebRTC negotiation plus explicit renegotiation when
+// a microphone track is added after the room connection has already started.
+// This is important for two-way audio: the room creator is the WebRTC offerer,
+// so a microphone added later by the guest must trigger a fresh offer from the
+// creator instead of only calling replaceTrack() on the guest.
 let pendingRemoteCandidates = [];
 let remoteDescriptionReady = false;
 let isSpeakerMuted = false;
 let remoteVoiceStream = null;
+let voiceRoomRef = null;
+let voiceIsCaller = false;
+let renegotiationBusy = false;
+let renegotiationQueue = false;
 
-async function addRemoteIceCandidate(candidate) {
-  if (!peerConnection || !candidate) return;
-  if (!remoteDescriptionReady) {
-    pendingRemoteCandidates.push(candidate);
-    return;
-  }
+async function addRemoteIceCandidate(candidate, pc = peerConnection) {
+  if (!pc || !candidate) return;
   try {
-    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+    await pc.addIceCandidate(new RTCIceCandidate(candidate));
   } catch (err) {
     console.warn("ICE candidate error:", err);
   }
@@ -507,16 +512,93 @@ function setSpeakerState(muted) {
   }
 }
 
+async function addRenegotiationCandidates(negRef, pc) {
+  negRef.child(voiceIsCaller ? "calleeCandidates" : "callerCandidates")
+    .on("child_added", snap => {
+      const c = snap.val();
+      if (c) addRemoteIceCandidate(c, pc);
+    });
+}
+
+async function createCallerRenegotiation() {
+  if (!peerConnection || !voiceRoomRef || !voiceIsCaller) return;
+  if (peerConnection.signalingState !== "stable") {
+    renegotiationQueue = true;
+    return;
+  }
+  if (renegotiationBusy) {
+    renegotiationQueue = true;
+    return;
+  }
+
+  renegotiationBusy = true;
+  const negRef = voiceRoomRef.child("renegotiations").push();
+  const negId = negRef.key;
+
+  try {
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    // ICE candidates can be generated immediately after setLocalDescription.
+    // Store them under this exact negotiation so they cannot be mixed with
+    // candidates from the original offer.
+    peerConnection.__activeNegotiationRef = negRef;
+
+    await negRef.child("offer").set({
+      sdp: offer.sdp,
+      type: offer.type
+    });
+
+    negRef.child("answer").on("value", async snap => {
+      const answer = snap.val();
+      if (!answer || peerConnection.signalingState !== "have-local-offer") return;
+      try {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        remoteDescriptionReady = true;
+        await flushRemoteIceCandidates();
+        console.log("Voice renegotiation completed:", negId);
+      } catch (err) {
+        console.warn("Voice renegotiation answer error:", err);
+      } finally {
+        renegotiationBusy = false;
+        if (renegotiationQueue) {
+          renegotiationQueue = false;
+          setTimeout(() => createCallerRenegotiation(), 0);
+        }
+      }
+    });
+
+    await addRenegotiationCandidates(negRef, peerConnection);
+  } catch (err) {
+    renegotiationBusy = false;
+    console.warn("Voice renegotiation error:", err);
+  }
+}
+
+function requestVoiceRenegotiation() {
+  if (!voiceRoomRef || voiceIsCaller) {
+    if (voiceIsCaller) createCallerRenegotiation();
+    return;
+  }
+  const requestRef = voiceRoomRef.child("renegotiationRequests").push();
+  requestRef.set({
+    requestedAt: firebase.database.ServerValue.TIMESTAMP
+  });
+}
+
 async function startVoiceChat(roomId, isCaller) {
   try {
-    // Clean state for a new room connection.
     pendingRemoteCandidates = [];
     remoteDescriptionReady = false;
     remoteVoiceStream = null;
+    voiceIsCaller = !!isCaller;
+    voiceRoomRef = database.ref("rooms/" + roomId + "/voice");
     peerConnection = new RTCPeerConnection(rtcConfig);
+    renegotiationBusy = false;
+    renegotiationQueue = false;
 
-    // Reserve the audio media section BEFORE creating the offer/answer.
-    // The remote side can therefore receive audio even when the mic is enabled later.
+    // Keep a stable audio m-line from the beginning. The actual microphone
+    // track can be attached later, followed by explicit renegotiation.
     audioTransceiver = peerConnection.addTransceiver("audio", { direction: "sendrecv" });
 
     peerConnection.onconnectionstatechange = () => {
@@ -531,9 +613,6 @@ async function startVoiceChat(roomId, isCaller) {
       const audio = document.getElementById("remoteAudio");
       if (!audio) return;
 
-      // Keep one persistent remote MediaStream. Some browsers fire separate
-      // track events for the same peer and replacing srcObject can interrupt
-      // playback, especially for the room creator.
       if (event.streams && event.streams[0]) {
         remoteVoiceStream = event.streams[0];
       } else {
@@ -542,57 +621,103 @@ async function startVoiceChat(roomId, isCaller) {
         if (!alreadyAdded) remoteVoiceStream.addTrack(event.track);
       }
 
+      event.track.enabled = true;
       audio.autoplay = true;
       audio.playsInline = true;
       audio.srcObject = remoteVoiceStream;
       audio.muted = isSpeakerMuted;
       audio.volume = isSpeakerMuted ? 0 : 1;
-      audio.load();
       audio.play().then(() => {
-        console.log("Remote voice playback started");
+        console.log("Remote voice playback started", {
+          trackId: event.track.id,
+          readyState: event.track.readyState
+        });
       }).catch(e => {
         console.log("Remote voice playback needs speaker interaction:", e);
       });
     };
 
-    const voiceRef = database.ref("rooms/" + roomId + "/voice");
     peerConnection.onicecandidate = (e) => {
-      if (e.candidate) {
-        const path = isCaller ? "callerCandidates" : "calleeCandidates";
-        voiceRef.child(path).push(e.candidate.toJSON());
+      if (!e.candidate) return;
+      const activeRef = peerConnection.__activeNegotiationRef;
+      if (activeRef) {
+        const path = voiceIsCaller ? "callerCandidates" : "calleeCandidates";
+        activeRef.child(path).push(e.candidate.toJSON());
+      } else {
+        const path = voiceIsCaller ? "callerCandidates" : "calleeCandidates";
+        voiceRoomRef.child(path).push(e.candidate.toJSON());
       }
     };
 
     if (isCaller) {
-      const offer = await peerConnection.createOffer({ offerToReceiveAudio: true });
+      // Initial negotiation.
+      const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      await voiceRef.child("offer").set({ sdp: offer.sdp, type: offer.type });
+      await voiceRoomRef.child("offer").set({ sdp: offer.sdp, type: offer.type });
 
-      voiceRef.child("answer").on("value", async snap => {
+      voiceRoomRef.child("answer").on("value", async snap => {
         const ans = snap.val();
         if (ans && !peerConnection.currentRemoteDescription) {
           await setRemoteDescriptionSafe(ans);
         }
       });
 
-      voiceRef.child("calleeCandidates").on("child_added", snap => {
+      voiceRoomRef.child("calleeCandidates").on("child_added", snap => {
         const c = snap.val();
-        if (c) addRemoteIceCandidate(c);
+        if (c) {
+          if (!remoteDescriptionReady) pendingRemoteCandidates.push(c);
+          else addRemoteIceCandidate(c);
+        }
       });
+
+      // The guest cannot create an offer itself in this simple two-peer setup.
+      // If the guest turns its mic on later, it asks the caller to renegotiate.
+      voiceRoomRef.child("renegotiationRequests").on("child_added", snap => {
+        if (snap.val()) createCallerRenegotiation();
+      });
+
+      // The caller is also allowed to renegotiate when its own microphone is
+      // enabled, so both directions use the same SDP path.
     } else {
-      voiceRef.child("offer").on("value", async snap => {
+      voiceRoomRef.child("offer").on("value", async snap => {
         const off = snap.val();
         if (off && !peerConnection.currentRemoteDescription) {
           await setRemoteDescriptionSafe(off);
           const ans = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(ans);
-          await voiceRef.child("answer").set({ sdp: ans.sdp, type: ans.type });
+          await voiceRoomRef.child("answer").set({ sdp: ans.sdp, type: ans.type });
         }
       });
 
-      voiceRef.child("callerCandidates").on("child_added", snap => {
+      voiceRoomRef.child("callerCandidates").on("child_added", snap => {
         const c = snap.val();
-        if (c) addRemoteIceCandidate(c);
+        if (c) {
+          if (!remoteDescriptionReady) pendingRemoteCandidates.push(c);
+          else addRemoteIceCandidate(c);
+        }
+      });
+
+      // Handle every new caller-created renegotiation offer.
+      voiceRoomRef.child("renegotiations").on("child_added", async snap => {
+        const negRef = snap.ref;
+        const neg = snap.val();
+        if (!neg || !neg.offer) return;
+
+        try {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(neg.offer));
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          await negRef.child("answer").set({ sdp: answer.sdp, type: answer.type });
+
+          negRef.child("callerCandidates").on("child_added", candidateSnap => {
+            const c = candidateSnap.val();
+            if (c) addRemoteIceCandidate(c);
+          });
+
+          console.log("Voice renegotiation answer sent:", snap.key);
+        } catch (err) {
+          console.warn("Voice renegotiation offer error:", err);
+        }
       });
     }
   } catch (err) {
@@ -615,6 +740,8 @@ async function toggleMicrophone() {
       throw new Error("Microphone is not available. Use HTTPS or localhost and allow browser microphone permission.");
     }
 
+    let newTrackWasAdded = false;
+
     if (!localVoiceStream) {
       localVoiceStream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -632,14 +759,24 @@ async function toggleMicrophone() {
         audioTransceiver.direction = "sendrecv";
         await audioTransceiver.sender.replaceTrack(track);
       } else if (peerConnection) {
-        peerConnection.addTrack(track, localVoiceStream);
+        audioTransceiver = peerConnection.addTransceiver(track, { direction: "sendrecv" });
       }
+      newTrackWasAdded = true;
     }
 
     isMicMuted = !isMicMuted;
     localVoiceStream.getAudioTracks().forEach(t => t.enabled = !isMicMuted);
 
-    // Clicking the mic is also a valid user gesture for starting remote playback.
+    // If the track was added after the initial SDP exchange, explicitly
+    // renegotiate. This is the key fix for guest -> creator audio.
+    if (newTrackWasAdded && peerConnection) {
+      if (voiceIsCaller) {
+        await createCallerRenegotiation();
+      } else {
+        requestVoiceRenegotiation();
+      }
+    }
+
     const audio = document.getElementById("remoteAudio");
     if (audio) {
       audio.muted = isSpeakerMuted;
