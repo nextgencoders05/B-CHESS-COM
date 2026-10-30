@@ -35,7 +35,11 @@ let isMicMuted = true;
 const rtcConfig = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" }
+    { urls: "stun:stun1.l.google.com:19302" },
+    // TURN relay fallback so voice works across different networks / mobile data
+    { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
   ]
 };
 
@@ -586,6 +590,42 @@ function requestVoiceRenegotiation() {
   });
 }
 
+// Acquire the microphone for BOTH players as soon as the room connects, so the
+// mic track is already inside the first offer/answer (no late renegotiation).
+// The track starts disabled (muted); the Mic button only enables/disables it.
+let micReadyPromise = Promise.resolve();
+async function acquireLocalMic() {
+  if (localVoiceStream) return localVoiceStream;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return null;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      video: false
+    });
+    stream.getAudioTracks().forEach(t => t.enabled = !isMicMuted);
+    localVoiceStream = stream;
+    return stream;
+  } catch (err) {
+    console.warn("Microphone not available at room start:", err);
+    return null;
+  }
+}
+
+async function attachLocalMicToPeer() {
+  if (!peerConnection || !localVoiceStream) return;
+  const track = localVoiceStream.getAudioTracks()[0];
+  if (!track) return;
+  let t = audioTransceiver;
+  if (!t) t = peerConnection.getTransceivers().find(x => x.receiver && x.receiver.track && x.receiver.track.kind === "audio");
+  if (t) {
+    audioTransceiver = t;
+    t.direction = "sendrecv";
+    await t.sender.replaceTrack(track);
+  } else {
+    audioTransceiver = peerConnection.addTransceiver(track, { direction: "sendrecv" });
+  }
+}
+
 async function startVoiceChat(roomId, isCaller) {
   try {
     pendingRemoteCandidates = [];
@@ -599,7 +639,11 @@ async function startVoiceChat(roomId, isCaller) {
 
     // Keep a stable audio m-line from the beginning. The actual microphone
     // track can be attached later, followed by explicit renegotiation.
-    audioTransceiver = peerConnection.addTransceiver("audio", { direction: "sendrecv" });
+    audioTransceiver = null;
+    if (isCaller) {
+      audioTransceiver = peerConnection.addTransceiver("audio", { direction: "sendrecv" });
+    }
+    micReadyPromise = acquireLocalMic();
 
     peerConnection.onconnectionstatechange = () => {
       console.log("Voice connection state:", peerConnection.connectionState);
@@ -650,7 +694,9 @@ async function startVoiceChat(roomId, isCaller) {
     };
 
     if (isCaller) {
-      // Initial negotiation.
+      // Initial negotiation (mic track included in the offer).
+      await micReadyPromise;
+      await attachLocalMicToPeer();
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
       await voiceRoomRef.child("offer").set({ sdp: offer.sdp, type: offer.type });
@@ -683,6 +729,8 @@ async function startVoiceChat(roomId, isCaller) {
         const off = snap.val();
         if (off && !peerConnection.currentRemoteDescription) {
           await setRemoteDescriptionSafe(off);
+          await micReadyPromise;
+          await attachLocalMicToPeer();
           const ans = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(ans);
           await voiceRoomRef.child("answer").set({ sdp: ans.sdp, type: ans.type });
@@ -705,6 +753,7 @@ async function startVoiceChat(roomId, isCaller) {
 
         try {
           await peerConnection.setRemoteDescription(new RTCSessionDescription(neg.offer));
+          await attachLocalMicToPeer();
           const answer = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(answer);
           await negRef.child("answer").set({ sdp: answer.sdp, type: answer.type });
@@ -743,24 +792,10 @@ async function toggleMicrophone() {
     let newTrackWasAdded = false;
 
     if (!localVoiceStream) {
-      localVoiceStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1
-        },
-        video: false
-      });
-      const track = localVoiceStream.getAudioTracks()[0];
-      if (!track) throw new Error("No microphone audio track was created.");
-
-      if (audioTransceiver) {
-        audioTransceiver.direction = "sendrecv";
-        await audioTransceiver.sender.replaceTrack(track);
-      } else if (peerConnection) {
-        audioTransceiver = peerConnection.addTransceiver(track, { direction: "sendrecv" });
-      }
+      // Mic was not granted at room start (or permission was denied) - ask again now.
+      const stream = await acquireLocalMic();
+      if (!stream) throw new Error("Microphone permission denied. Allow the microphone in the browser address bar and try again.");
+      await attachLocalMicToPeer();
       newTrackWasAdded = true;
     }
 
