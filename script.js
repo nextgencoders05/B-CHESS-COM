@@ -1,5 +1,5 @@
 // ==========================================================================
-// B-CHESS ANALYZER: ALL ORIGINAL ENGINE & SOUNDS + MULTIPLAYER, CHAT, RATINGS
+// B-CHESS ANALYZER: COMPLETE SCRIPT WITH ERROR 1003 FIX & FULL MULTIPLAYER
 // ==========================================================================
 
 // --- 1. FIREBASE CONFIGURATION ---
@@ -23,6 +23,8 @@ const database = firebase.database();
 let board = null;
 let game = new Chess();
 let soundEnabled = true;
+let arrowEnabled = true;
+let boardTheme = "green"; // green or wood
 let currentMode = "analysis"; // 'analysis', 'ai', 'friend'
 
 let currentUserId = null;
@@ -42,7 +44,7 @@ const rtcConfig = {
   ]
 };
 
-// --- 3. CUSTOM NATURAL SOUND EFFECTS (Original Audio Synthesis & Audio Context) ---
+// --- 3. CUSTOM SOUND EFFECTS (Natural Wooden Clicks, Captures & Blunders) ---
 let audioCtx = null;
 function getAudioContext() {
   if (!audioCtx) {
@@ -64,7 +66,6 @@ function playSound(type) {
 
     const now = ctx.currentTime;
     if (type === 'move') {
-      // Natural wooden click sound
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(320, now);
       osc.frequency.exponentialRampToValueAtTime(80, now + 0.08);
@@ -99,13 +100,53 @@ function toggleSound() {
   document.getElementById("soundToggleBtn").innerText = soundEnabled ? "🔊 Sound: ON" : "🔇 Sound: OFF";
 }
 
-// --- 4. INITIALIZATION & MANDATORY GOOGLE LOGIN ---
-window.addEventListener("DOMContentLoaded", () => {
+function toggleArrow() {
+  arrowEnabled = !arrowEnabled;
+  document.getElementById("arrowToggleBtn").innerText = arrowEnabled ? "🏹 Arrow: ON" : "🏹 Arrow: OFF";
+}
+
+function toggleBoardTheme() {
+  const boardEl = document.querySelector("#board");
+  if (!boardEl) return;
+  if (boardTheme === "green") {
+    boardTheme = "wood";
+    document.getElementById("themeToggleBtn").innerText = "🎨 Classic Wood";
+  } else {
+    boardTheme = "green";
+    document.getElementById("themeToggleBtn").innerText = "🎨 Green & White";
+  }
+}
+
+// --- 4. BOARD INITIALIZATION (Bulletproof against Error 1003) ---
+function initBoard() {
+  // Check if DOM target element exists (supporting both 'board' and 'myBoard')
+  let boardTarget = document.getElementById("board") || document.getElementById("myBoard");
+  if (!boardTarget) {
+    console.error("Chessboard DOM element not found, retrying...");
+    return;
+  }
+
+  const cfg = {
+    draggable: true,
+    position: 'start',
+    pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
+    onDragStart: handleDragStart,
+    onDrop: handleDrop,
+    onSnapEnd: () => board.position(game.fen())
+  };
+
+  board = Chessboard(boardTarget, cfg);
+  updateGameMeta();
+}
+
+// Ensure execution strictly after DOM is ready
+$(document).ready(() => {
   initBoard();
   initAuthAndRating();
   setupAudioUnlock();
 });
 
+// --- 5. GOOGLE AUTH & MANDATORY SKILL SELECTION ---
 function initAuthAndRating() {
   auth.onAuthStateChanged(async (user) => {
     if (user) {
@@ -122,7 +163,6 @@ function initAuthAndRating() {
       const data = snap.val();
 
       if (!data || !data.rating) {
-        // Show skill level selection modal
         document.getElementById("skillModal").style.display = "flex";
       } else {
         currentUserRating = data.rating;
@@ -132,7 +172,7 @@ function initAuthAndRating() {
       currentUserId = null;
       document.getElementById("googleLoginBtn").style.display = "flex";
       document.getElementById("userProfile").style.display = "none";
-      // Prompt Google Login
+      // Prompt sign in
       triggerGoogleLogin();
     }
   });
@@ -141,7 +181,7 @@ function initAuthAndRating() {
 function triggerGoogleLogin() {
   const provider = new firebase.auth.GoogleAuthProvider();
   auth.signInWithPopup(provider).catch(err => {
-    console.warn("Login prompt:", err.message);
+    console.warn("Google sign-in popup closed/blocked:", err.message);
   });
 }
 
@@ -172,7 +212,6 @@ function updateRatingDisplays() {
   document.getElementById("playerRating").innerText = `(${currentUserRating})`;
 }
 
-// Match Rating Change: +8 for Winner, -8 for Loser
 function updateMatchRatings(winnerUid, loserUid) {
   if (winnerUid) {
     database.ref("users/" + winnerUid + "/rating").transaction(r => (r || 800) + 8);
@@ -182,7 +221,7 @@ function updateMatchRatings(winnerUid, loserUid) {
   }
 }
 
-// --- 5. WEBRTC VOICE CHAT WITH AUTOPLAY FIX ---
+// --- 6. WEBRTC VOICE CHAT WITH AUTOPLAY FIX ---
 function setupAudioUnlock() {
   const unlock = () => {
     const audio = document.getElementById("remoteAudio");
@@ -196,10 +235,10 @@ function setupAudioUnlock() {
 async function startVoiceChat(roomId, isCaller) {
   try {
     localVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localVoiceStream.getAudioTracks().forEach(t => t.enabled = false); // muted initially
+    localVoiceStream.getAudioTracks().forEach(t => t.enabled = false);
 
     document.getElementById("toggleMicBtn").disabled = false;
-    document.getElementById("voiceStatus").className = "voice-status-badge on";
+    document.getElementById("voiceStatus").className = "voice-badge on";
     document.getElementById("voiceStatus").innerText = "Connected";
 
     peerConnection = new RTCPeerConnection(rtcConfig);
@@ -258,7 +297,7 @@ async function startVoiceChat(roomId, isCaller) {
       });
     }
   } catch (err) {
-    console.warn("Microphone not available or permission denied:", err);
+    console.warn("Microphone access denied or unsupported:", err);
   }
 }
 
@@ -277,24 +316,10 @@ function toggleMicrophone() {
   }
 }
 
-// --- 6. CHESS ENGINE & BOARD LOGIC ---
-function initBoard() {
-  const cfg = {
-    draggable: true,
-    position: 'start',
-    pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
-    onDragStart: handleDragStart,
-    onDrop: handleDrop,
-    onSnapEnd: () => board.position(game.fen())
-  };
-  board = Chessboard('board', cfg);
-  updateGameMeta();
-}
-
+// --- 7. CHESS ENGINE & MOVE HANDLERS ---
 function handleDragStart(source, piece, position, orientation) {
   if (game.game_over()) return false;
 
-  // In Multiplayer mode, check color and turn
   if (currentMode === "friend" && currentRoomCode) {
     if ((myColor === 'w' && piece.search(/^b/) !== -1) ||
         (myColor === 'b' && piece.search(/^w/) !== -1)) {
@@ -317,13 +342,11 @@ function handleDrop(source, target) {
 
   if (move === null) return 'snapback';
 
-  // Play Sound
   if (isCapture) playSound('capture');
   else playSound('move');
 
   if (game.in_check()) playSound('check');
 
-  // Push Move in Multiplayer
   if (currentMode === "friend" && currentRoomCode) {
     database.ref("rooms/" + currentRoomCode + "/game").update({
       fen: game.fen(),
@@ -338,8 +361,6 @@ function handleDrop(source, target) {
 function updateGameMeta() {
   const turn = game.turn() === 'w' ? "White to move" : "Black to move";
   document.getElementById("gameStatusText").innerText = turn;
-
-  // Simple Material & captured pieces tracker
   updateCapturedPieces();
 }
 
@@ -350,19 +371,14 @@ function recordMoveHistory(move) {
 }
 
 function updateCapturedPieces() {
-  // Compute captured pieces from initial vs current board pieces
   const pieces = { p: 8, r: 2, n: 2, b: 2, q: 1 };
   let whiteCaptured = "";
   let blackCaptured = "";
 
-  const boardArray = game.board();
   const currentCounts = { w: {}, b: {} };
-
-  boardArray.forEach(row => {
+  game.board().forEach(row => {
     row.forEach(sq => {
-      if (sq) {
-        currentCounts[sq.color][sq.type] = (currentCounts[sq.color][sq.type] || 0) + 1;
-      }
+      if (sq) currentCounts[sq.color][sq.type] = (currentCounts[sq.color][sq.type] || 0) + 1;
     });
   });
 
@@ -377,12 +393,12 @@ function updateCapturedPieces() {
   document.getElementById("opponentCaptured").innerText = blackCaptured;
 }
 
-// --- 7. PLAY WITH FRIENDS, ROOMS, RESIGN & DRAW ---
+// --- 8. MODE SWITCHER & MULTIPLAYER ROOMS ---
 function switchMode(mode) {
   currentMode = mode;
   document.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
   if (mode === 'analysis') document.getElementById("modeAnalysisBtn").classList.add("active");
-  if (mode === 'ai') document.getElementById("modeVsAiBtn").classList.add("active");
+  if (mode === 'ai') document.getElementById("modeVsBotBtn").classList.add("active");
   if (mode === 'friend') document.getElementById("modeFriendBtn").classList.add("active");
 
   const multiPanel = document.getElementById("multiplayerPanel");
@@ -446,7 +462,7 @@ function joinRoom() {
 }
 
 function showRoomUI(code) {
-  document.getElementById("roomActiveInfo").style.display = "flex";
+  document.getElementById("roomActiveBanner").style.display = "flex";
   document.getElementById("activeRoomCodeDisplay").innerText = code;
 }
 
@@ -462,7 +478,6 @@ function listenToRoom(roomId, isCreator) {
     const val = snap.val();
     if (!val) return;
 
-    // Opponent Details
     if (isCreator && val.guestName) {
       document.getElementById("opponentName").innerText = val.guestName;
       document.getElementById("opponentRating").innerText = `(${val.guestRating || 800})`;
@@ -471,7 +486,6 @@ function listenToRoom(roomId, isCreator) {
       document.getElementById("opponentRating").innerText = `(${val.creatorRating || 800})`;
     }
 
-    // Sync Chess Board
     if (val.game && val.game.fen && val.game.fen !== game.fen()) {
       if (val.game.fen === 'start') game.reset();
       else game.load(val.game.fen);
@@ -480,7 +494,6 @@ function listenToRoom(roomId, isCreator) {
       updateGameMeta();
     }
 
-    // Draw Offer Listener
     if (val.drawOffer && val.drawOffer !== currentUserId) {
       const accept = confirm("Opponent offered a draw. Do you accept?");
       if (accept) {
@@ -490,7 +503,6 @@ function listenToRoom(roomId, isCreator) {
       }
     }
 
-    // Resign & Game Over Listener
     if (val.gameOver) {
       if (val.result === 'resigned') {
         const iWon = val.winner === currentUserId;
@@ -504,8 +516,9 @@ function listenToRoom(roomId, isCreator) {
   listenForChat(roomId);
 }
 
+// --- 9. RESIGN & DRAW REQUESTS ---
 function resignCurrentGame() {
-  if (!currentRoomCode) return alert("Not in a game!");
+  if (!currentRoomCode) return alert("Not in an active match!");
   if (!confirm("Are you sure you want to resign? (-8 Rating)")) return;
 
   const roomRef = database.ref("rooms/" + currentRoomCode);
@@ -524,12 +537,12 @@ function resignCurrentGame() {
 }
 
 function offerDrawGame() {
-  if (!currentRoomCode) return alert("Not in a game!");
+  if (!currentRoomCode) return alert("Not in an active match!");
   database.ref("rooms/" + currentRoomCode + "/drawOffer").set(currentUserId);
   alert("Draw offer sent to opponent.");
 }
 
-// --- 8. IN-GAME LIVE CHAT ---
+// --- 10. LIVE IN-GAME CHAT ---
 function handleSendChat(e) {
   e.preventDefault();
   const input = document.getElementById("chatInput");
@@ -555,7 +568,7 @@ function listenForChat(roomId) {
 
     const bubble = document.createElement("div");
     bubble.className = `chat-bubble ${isMe ? 'mine' : 'theirs'}`;
-    bubble.innerHTML = `<span class="chat-sender-name">${escapeHtml(msg.sender)}</span>${escapeHtml(msg.text)}`;
+    bubble.innerHTML = `<span class="chat-author">${escapeHtml(msg.sender)}</span>${escapeHtml(msg.text)}`;
 
     container.appendChild(bubble);
     container.scrollTop = container.scrollHeight;

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>B Chess Analyzer - Online Multiplayer & Live Voice Chat</title>
+  <title>B Chess Analyzer - Online Multiplayer • Live Voice Chat • Stockfish Engine • Review</title>
   <link rel="stylesheet" href="style.css">
 
   <!-- Chessboard.js & Chess.js CDN dependencies -->
@@ -19,37 +19,43 @@
 </head>
 <body>
 
-  <!-- TOP HEADER -->
+  <!-- TOP HEADER (Matches user original design) -->
   <header class="navbar">
     <div class="nav-left">
-      <div class="logo">
-        <span class="logo-icon">♟️</span>
-        <span class="logo-text">B Chess Analyzer</span>
+      <div class="brand-block">
+        <h1 class="logo-title">B Chess Analyzer</h1>
+        <p class="tagline">Online Multiplayer • Live Voice Chat • Stockfish Engine • Review</p>
       </div>
-      <div class="mode-selectors">
+      
+      <div class="toolbar-controls">
+        <button id="soundToggleBtn" class="tool-btn" onclick="toggleSound()">🔊 Sound: ON</button>
+        <button id="themeToggleBtn" class="tool-btn" onclick="toggleBoardTheme()">🎨 Green & White</button>
+        <button id="arrowToggleBtn" class="tool-btn" onclick="toggleArrow()">🏹 Arrow: ON</button>
+      </div>
+
+      <div class="mode-bar">
+        <span class="mode-label">Mode:</span>
         <button id="modeAnalysisBtn" class="mode-btn active" onclick="switchMode('analysis')">Analysis</button>
-        <button id="modeVsAiBtn" class="mode-btn" onclick="switchMode('ai')">Play vs AI</button>
+        <button id="modeVsBotBtn" class="mode-btn" onclick="switchMode('ai')">Play vs Bot</button>
         <button id="modeFriendBtn" class="mode-btn" onclick="switchMode('friend')">Play with Friend</button>
       </div>
     </div>
+
     <div class="nav-right">
-      <div id="soundToggleWrapper">
-        <button id="soundToggleBtn" class="nav-btn" onclick="toggleSound()">🔊 Sound: ON</button>
-      </div>
       <div id="authSection" class="auth-section">
         <button id="googleLoginBtn" class="btn-google-login" onclick="triggerGoogleLogin()">
-          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="G"> Sign in with Google
+          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google"> Sign in with Google
         </button>
         <div id="userProfile" class="user-profile" style="display: none;">
-          <span id="userNameDisplay">Player</span>
+          <span id="userNameDisplay" class="user-name">Player</span>
           <span id="userRatingDisplay" class="rating-badge">800</span>
-          <button class="nav-btn-sm" onclick="handleLogout()">Sign Out</button>
+          <button class="btn-signout" onclick="handleLogout()">Sign Out</button>
         </div>
       </div>
     </div>
   </header>
 
-  <!-- SKILL LEVEL SELECTION MODAL (First-Time Google Sign-In) -->
+  <!-- SKILL LEVEL SELECTION MODAL (First-time user after Google Sign-in) -->
   <div id="skillModal" class="modal-backdrop" style="display: none;">
     <div class="modal-box">
       <h3>Select Your Chess Skill Level</h3>
@@ -71,102 +77,107 @@
     </div>
   </div>
 
-  <!-- MAIN CHESS CONTAINER -->
-  <div class="app-layout">
+  <!-- MAIN APPLICATION LAYOUT -->
+  <main class="app-container">
     
-    <!-- LEFT: BOARD & OPPONENT/PLAYER BANNERS -->
-    <div class="board-column">
-
+    <!-- LEFT: CHESS BOARD & CONTROLS -->
+    <section class="board-column">
+      
       <!-- Opponent Info Bar -->
       <div class="player-bar opponent-bar">
-        <div class="player-left">
-          <span class="player-icon">👤</span>
+        <div class="player-details">
+          <span class="avatar-icon">👤</span>
           <span id="opponentName">Opponent</span>
-          <span id="opponentRating" class="sub-rating">(----)</span>
+          <span id="opponentRating" class="rating-tag">(----)</span>
         </div>
-        <div id="opponentCaptured" class="captured-box"></div>
-        <div id="opponentMaterial" class="material-lead"></div>
+        <div id="opponentCaptured" class="captured-display"></div>
+        <div id="opponentMaterial" class="material-val"></div>
       </div>
 
-      <!-- Chess Board Container with Evaluation Bar -->
-      <div class="board-area">
-        <div class="eval-bar-wrapper">
+      <!-- Chess Board Area with Evaluation Bar -->
+      <div class="board-wrapper">
+        <div class="eval-bar-container">
           <div id="evalBarFill" class="eval-bar-fill" style="height: 50%;"></div>
-          <span id="evalBarText" class="eval-bar-text">+0.0</span>
+          <span id="evalBarText" class="eval-text">0.0</span>
         </div>
-        <div id="board" class="board"></div>
+        
+        <!-- Board ID: supports both "board" and "myBoard" to prevent Chessboard Error 1003 -->
+        <div id="board" class="chess-board"></div>
       </div>
 
       <!-- Player (You) Info Bar -->
-      <div class="player-bar player-bottom-bar">
-        <div class="player-left">
-          <span class="player-icon">♟️</span>
+      <div class="player-bar player-bar-bottom">
+        <div class="player-details">
+          <span class="avatar-icon">♟️</span>
           <span id="playerName">You</span>
-          <span id="playerRating" class="sub-rating">(800)</span>
+          <span id="playerRating" class="rating-tag">(800)</span>
         </div>
-        <div id="playerCaptured" class="captured-box"></div>
-        <div id="playerMaterial" class="material-lead"></div>
+        <div id="playerCaptured" class="captured-display"></div>
+        <div id="playerMaterial" class="material-val"></div>
       </div>
 
-      <!-- In-Game Multiplayer Controls (Resign & Draw) -->
+      <!-- In-Game Multiplayer Actions (Offer Draw & Resign) -->
       <div id="gameActionControls" class="game-action-controls" style="display: none;">
         <button id="offerDrawBtn" class="action-btn draw-btn" onclick="offerDrawGame()">🤝 Offer Draw</button>
         <button id="resignBtn" class="action-btn resign-btn" onclick="resignCurrentGame()">🏳️ Resign (-8)</button>
       </div>
 
-    </div>
+    </section>
 
-    <!-- RIGHT: MULTIPLAYER, CHAT & ANALYSIS SIDEBAR -->
-    <div class="sidebar-column">
+    <!-- RIGHT: MULTIPLAYER, CHAT, ANALYSIS & ENGINE EVALUATION -->
+    <aside class="sidebar-column">
 
-      <!-- PLAY WITH FRIEND / MULTIPLAYER PANEL -->
-      <div id="multiplayerPanel" class="side-panel">
-        <div class="panel-header">
-          <h4>Play with Friends</h4>
+      <!-- PLAY WITH FRIEND MULTIPLAYER PANEL -->
+      <div id="multiplayerPanel" class="side-card" style="display: none;">
+        <div class="card-header">
+          <h3>Play with Friends</h3>
         </div>
-        <div class="room-setup-row">
-          <button id="createRoomBtn" class="btn-primary" onclick="createRoom()">Create Room</button>
-          <div class="join-row">
-            <input type="text" id="roomCodeInput" placeholder="Enter Room Code">
-            <button class="btn-secondary" onclick="joinRoom()">Join</button>
+        
+        <div class="room-setup">
+          <button id="createRoomBtn" class="btn-create-room" onclick="createRoom()">Create Room</button>
+          <div class="join-input-group">
+            <input type="text" id="roomCodeInput" placeholder="Room Code">
+            <button class="btn-join-room" onclick="joinRoom()">Join</button>
           </div>
         </div>
-        <div id="roomActiveInfo" class="room-active-banner" style="display: none;">
+
+        <div id="roomActiveBanner" class="room-active-banner" style="display: none;">
           <span>Room Code: <strong id="activeRoomCodeDisplay">------</strong></span>
           <button class="btn-copy-code" onclick="copyRoomCode()">Copy</button>
         </div>
 
         <!-- VOICE CHAT -->
-        <div class="voice-chat-row">
-          <div class="voice-info">
-            <span class="voice-title">🎙️ Live Voice Chat:</span>
-            <span id="voiceStatus" class="voice-status-badge off">Disconnected</span>
+        <div class="voice-chat-box">
+          <div class="voice-status-line">
+            <span class="voice-label">🎙️ Live Voice Chat:</span>
+            <span id="voiceStatus" class="voice-badge off">Disconnected</span>
           </div>
           <button id="toggleMicBtn" class="btn-mic" onclick="toggleMicrophone()" disabled>🎤 Mute / Unmute</button>
         </div>
 
-        <!-- IN-GAME LIVE CHAT -->
-        <div class="chat-wrapper">
-          <div class="chat-header-title">💬 Live Chat</div>
-          <div id="chatMessages" class="chat-box">
-            <div class="chat-empty">Join a room to chat with your opponent.</div>
+        <!-- LIVE IN-GAME CHAT -->
+        <div class="chat-container">
+          <div class="chat-title">💬 Live Chat</div>
+          <div id="chatMessages" class="chat-messages-box">
+            <div class="chat-placeholder">Join a room to chat with your friend.</div>
           </div>
-          <form id="chatForm" onsubmit="handleSendChat(event)" class="chat-input-bar">
+          <form id="chatForm" onsubmit="handleSendChat(event)" class="chat-form">
             <input type="text" id="chatInput" placeholder="Type a message..." autocomplete="off">
-            <button type="submit" class="btn-chat-send">Send</button>
+            <button type="submit" class="btn-send-chat">Send</button>
           </form>
         </div>
+
       </div>
 
       <!-- ANALYSIS & GAME REVIEW PANEL -->
-      <div class="side-panel">
-        <div class="tabs-header">
+      <div class="side-card">
+        <div class="tab-buttons">
           <button id="tabAnalysis" class="tab-btn active" onclick="switchSidebarTab('analysis')">Analysis</button>
           <button id="tabReview" class="tab-btn" onclick="switchSidebarTab('review')">Game Review & Eval</button>
         </div>
 
         <div id="tabContentAnalysis" class="tab-content">
-          <div class="status-meta">
+          <div class="meta-status-box">
             <div class="meta-row">
               <span>Status:</span>
               <strong id="gameStatusText">White to move</strong>
@@ -181,26 +192,24 @@
             </div>
           </div>
 
-          <div class="move-history-title">Move History</div>
-          <div id="moveHistoryList" class="move-history-list"></div>
+          <div class="history-header">Move History</div>
+          <div id="moveHistoryList" class="move-history-box"></div>
         </div>
 
         <div id="tabContentReview" class="tab-content" style="display: none;">
-          <div class="review-stats">
-            <div class="review-card best"><span class="badge">★</span> Best Moves: <strong id="countBest">0</strong></div>
-            <div class="review-card blunder"><span class="badge">??</span> Blunders: <strong id="countBlunder">0</strong></div>
-            <div class="review-card mistake"><span class="badge">?</span> Mistakes: <strong id="countMistake">0</strong></div>
-            <div class="review-card inaccuracy"><span class="badge">?!</span> Inaccuracies: <strong id="countInaccuracy">0</strong></div>
+          <div class="review-grid">
+            <div class="review-item best"><span class="badge">★</span> Best Moves: <strong id="countBest">0</strong></div>
+            <div class="review-item blunder"><span class="badge">??</span> Blunders: <strong id="countBlunder">0</strong></div>
+            <div class="review-item mistake"><span class="badge">?</span> Mistakes: <strong id="countMistake">0</strong></div>
+            <div class="review-item inaccuracy"><span class="badge">?!</span> Inaccuracies: <strong id="countInaccuracy">0</strong></div>
           </div>
         </div>
-
       </div>
 
-    </div>
+    </aside>
+  </main>
 
-  </div>
-
-  <!-- Audio Element for WebRTC Remote Stream (With Autoplay Fix) -->
+  <!-- Audio Element for WebRTC Remote Stream (With Autoplay Unlock Fix) -->
   <audio id="remoteAudio" autoplay playsinline></audio>
 
   <script src="script.js"></script>
