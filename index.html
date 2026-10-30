@@ -27,9 +27,11 @@
           <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" class="google-icon" /> Sign in with Google
         </button>
         <div id="userProfile" class="user-profile-widget" style="display: none;">
-          <span class="user-avatar-dot"></span>
+          <img id="userAvatarImg" class="user-avatar-img" src="" alt="Profile" style="display:none;" />
+          <span id="userAvatarFallback" class="user-avatar-dot">P</span>
           <span id="userNameDisplay" class="user-name-txt">Player</span>
           <span id="userRatingDisplay" class="rating-badge-pill">800</span>
+          <button id="editProfileBtn" class="pill-btn profile-edit-pill">Profile</button>
           <button id="signOutBtn" class="pill-btn signout-pill">Sign Out</button>
         </div>
       </div>
@@ -89,10 +91,9 @@
               <div class="voice-chat-row">
                 <div class="voice-status-box">
                   <span id="voiceStatusDot" class="voice-dot off"></span>
-                  <span id="voiceStatusText" class="voice-text">Live Voice Chat: OFF</span><span class="live-chat-enabled-badge">💬 Live Chat Enabled</span>
+                  <span id="voiceStatusText" class="voice-text">Live Voice Chat: OFF</span>
                 </div>
-                <button id="toggleMicBtn" class="pill-btn mic-action-btn">🎙️ மைக் ஆன் செய் (Turn Mic ON)</button>
-                <button id="toggleSpeakerBtn" class="pill-btn speaker-action-btn">🔊 ஸ்பீக்கர் ஆன் (Unmute)</button>
+                <button id="toggleMicBtn" class="pill-btn mic-action-btn">🎙️ Turn Mic ON</button>
               </div>
             </div>
           </div>
@@ -328,6 +329,28 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="script.js"></script>
+
+  <!-- User Profile Setup / Edit Modal -->
+  <div id="profileModal" class="skill-modal-overlay" style="display: none;">
+    <div class="skill-modal-window profile-modal-window">
+      <div class="modal-chess-icon">♟</div>
+      <h2>Set Up Your Profile</h2>
+      <p class="modal-subtext">Choose the username and profile picture you want to use on B Chess Analyzer.</p>
+      <label class="profile-field-label" for="profileUsernameInput">Username</label>
+      <input id="profileUsernameInput" class="profile-input" type="text" maxlength="20" placeholder="Enter username" autocomplete="nickname" />
+      <label class="profile-field-label" for="profilePhotoInput">Profile Picture</label>
+      <input id="profilePhotoInput" class="profile-file-input" type="file" accept="image/*" />
+      <div class="profile-preview-wrap">
+        <img id="profilePreviewImg" class="profile-preview-img" src="" alt="Profile preview" style="display:none;" />
+        <span id="profilePreviewFallback" class="profile-preview-fallback">P</span>
+      </div>
+      <div class="profile-actions">
+        <button id="saveProfileBtn" class="pill-btn highlight-btn">Save Profile</button>
+        <button id="cancelProfileBtn" class="pill-btn" style="display:none;">Cancel</button>
+      </div>
+      <div id="profileSaveStatus" class="profile-save-status"></div>
+    </div>
+  </div>
 
   <!-- First-Time User Skill Level Selection Modal -->
   <div id="skillModal" class="skill-modal-overlay" style="display: none;">

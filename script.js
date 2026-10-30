@@ -21,6 +21,7 @@ const database = firebase.database();
 // Global User & Multiplayer State
 let currentUserId = null;
 let currentUserName = "Player";
+let currentUserPhoto = "";
 let currentUserRating = 800;
 let currentRoomCode = null;
 let myOnlineColor = 'w';
@@ -28,9 +29,9 @@ let isOnlineMatchActive = false;
 
 // WebRTC Live Voice Chat State
 let peerConnection = null;
+let audioTransceiver = null;
 let localVoiceStream = null;
 let isMicMuted = true;
-let speakerMuted = false;
 const rtcConfig = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
@@ -91,21 +92,22 @@ auth.getRedirectResult().catch(err => console.log(err));
 auth.onAuthStateChanged(async (user) => {
   if (user) {
     currentUserId = user.uid;
-    currentUserName = user.displayName || "Player";
-
     const loginBtn = document.getElementById("googleLoginBtn");
     const userProfile = document.getElementById("userProfile");
-    const nameDisplay = document.getElementById("userNameDisplay");
     if (loginBtn) loginBtn.style.display = "none";
     if (userProfile) userProfile.style.display = "inline-flex";
-    if (nameDisplay) nameDisplay.textContent = currentUserName;
 
     const snap = await database.ref("users/" + user.uid).once("value");
-    const data = snap.val();
+    const data = snap.val() || {};
+    currentUserName = data.username || data.name || user.displayName || "Player";
+    currentUserPhoto = data.photoData || user.photoURL || "";
+    updateProfileUI();
 
-    if (!data || !data.rating) {
+    if (!data.username) openProfileModal(true);
+
+    if (!data.rating) {
       const modal = document.getElementById("skillModal");
-      if (modal) modal.style.display = "flex";
+      if (modal && data.username) modal.style.display = "flex";
     } else {
       currentUserRating = data.rating;
       const ratingDisplay = document.getElementById("userRatingDisplay");
@@ -113,12 +115,122 @@ auth.onAuthStateChanged(async (user) => {
     }
   } else {
     currentUserId = null;
+    currentUserName = "Player";
+    currentUserPhoto = "";
     const loginBtn = document.getElementById("googleLoginBtn");
     const userProfile = document.getElementById("userProfile");
     if (loginBtn) loginBtn.style.display = "inline-flex";
     if (userProfile) userProfile.style.display = "none";
   }
 });
+
+function updateProfileUI() {
+  const nameDisplay = document.getElementById("userNameDisplay");
+  const avatar = document.getElementById("userAvatarImg");
+  const fallback = document.getElementById("userAvatarFallback");
+  if (nameDisplay) nameDisplay.textContent = currentUserName;
+  if (currentUserPhoto) {
+    if (avatar) { avatar.src = currentUserPhoto; avatar.style.display = "block"; }
+    if (fallback) fallback.style.display = "none";
+  } else {
+    if (avatar) avatar.style.display = "none";
+    if (fallback) {
+      fallback.textContent = (currentUserName || "P").charAt(0).toUpperCase();
+      fallback.style.display = "inline-flex";
+    }
+  }
+}
+
+function openProfileModal(firstSetup = false) {
+  const modal = document.getElementById("profileModal");
+  const usernameInput = document.getElementById("profileUsernameInput");
+  const photoInput = document.getElementById("profilePhotoInput");
+  const preview = document.getElementById("profilePreviewImg");
+  const fallback = document.getElementById("profilePreviewFallback");
+  const cancelBtn = document.getElementById("cancelProfileBtn");
+  const status = document.getElementById("profileSaveStatus");
+  if (!modal) return;
+
+  if (usernameInput) usernameInput.value = currentUserName === "Player" ? "" : currentUserName;
+  if (photoInput) photoInput.value = "";
+  if (status) status.textContent = "";
+
+  if (currentUserPhoto) {
+    if (preview) { preview.src = currentUserPhoto; preview.style.display = "block"; }
+    if (fallback) fallback.style.display = "none";
+  } else {
+    if (preview) preview.style.display = "none";
+    if (fallback) {
+      fallback.textContent = (currentUserName || "P").charAt(0).toUpperCase();
+      fallback.style.display = "inline-flex";
+    }
+  }
+  if (cancelBtn) cancelBtn.style.display = firstSetup ? "none" : "inline-block";
+  modal.dataset.firstSetup = firstSetup ? "true" : "false";
+  modal.style.display = "flex";
+}
+
+function closeProfileModal() {
+  const modal = document.getElementById("profileModal");
+  if (modal) modal.style.display = "none";
+}
+
+function readAndResizeProfilePhoto(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const size = 256, canvas = document.createElement("canvas");
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        const scale = Math.max(size / img.width, size / img.height);
+        const w = img.width * scale, h = img.height * scale;
+        ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      };
+      img.onerror = reject; img.src = reader.result;
+    };
+    reader.onerror = reject; reader.readAsDataURL(file);
+  });
+}
+
+async function saveUserProfile() {
+  if (!currentUserId) return;
+  const usernameInput = document.getElementById("profileUsernameInput");
+  const photoInput = document.getElementById("profilePhotoInput");
+  const status = document.getElementById("profileSaveStatus");
+  const saveBtn = document.getElementById("saveProfileBtn");
+  const username = (usernameInput?.value || "").trim().replace(/\s+/g, " ");
+
+  if (!username) { if (status) status.textContent = "Please enter a username."; return; }
+  if (username.length < 2) { if (status) status.textContent = "Username must be at least 2 characters."; return; }
+
+  try {
+    if (saveBtn) saveBtn.disabled = true;
+    if (status) status.textContent = "Saving...";
+    let photoData = currentUserPhoto;
+    if (photoInput?.files?.[0]) photoData = await readAndResizeProfilePhoto(photoInput.files[0]);
+
+    await database.ref("users/" + currentUserId).update({
+      username, name: username, photoData: photoData || ""
+    });
+    currentUserName = username;
+    currentUserPhoto = photoData || "";
+    updateProfileUI();
+    closeProfileModal();
+
+    const modal = document.getElementById("skillModal");
+    const snap = await database.ref("users/" + currentUserId).once("value");
+    const data = snap.val() || {};
+    if (modal && !data.rating) modal.style.display = "flex";
+  } catch (err) {
+    console.error("Profile save error:", err);
+    if (status) status.textContent = "Could not save profile: " + err.message;
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
 
 function handleLogout() {
   auth.signOut().then(() => window.location.reload());
@@ -130,8 +242,10 @@ function selectSkillLevel(level) {
   if (level === 'advanced') initial = 1600;
 
   if (currentUserId) {
-    database.ref("users/" + currentUserId).set({
+    database.ref("users/" + currentUserId).update({
+      username: currentUserName,
       name: currentUserName,
+      photoData: currentUserPhoto || "",
       rating: initial,
       skillLevel: level
     }).then(() => {
@@ -352,27 +466,22 @@ async function startVoiceChat(roomId, isCaller) {
   try {
     peerConnection = new RTCPeerConnection(rtcConfig);
 
-    // Create the audio transceiver BEFORE creating the offer/answer.
-    // This is important: both peers then negotiate an audio channel even
-    // when the microphone is initially muted.
-    const audioTransceiver = peerConnection.addTransceiver("audio", {
-      direction: "sendrecv"
-    });
+    // Reserve the audio media section BEFORE creating the offer.
+    // This fixes the old bug where the offer contained no audio track.
+    audioTransceiver = peerConnection.addTransceiver("audio", { direction: "sendrecv" });
 
     peerConnection.ontrack = (event) => {
       const audio = document.getElementById("remoteAudio");
-      if (audio && event.streams[0]) {
-        audio.srcObject = event.streams[0];
-        audio.muted = speakerMuted;
+      if (audio) {
+        const stream = event.streams?.[0] || new MediaStream([event.track]);
+        audio.srcObject = stream;
+        audio.muted = false;
         audio.volume = 1.0;
-        audio.play().catch(e => {
-          console.log("Voice audio autoplay waiting for user interaction:", e);
-        });
+        audio.play().catch(e => console.log("Voice audio autoplay standby:", e));
       }
     };
 
     const voiceRef = database.ref("rooms/" + roomId + "/voice");
-
     peerConnection.onicecandidate = (e) => {
       if (e.candidate) {
         const path = isCaller ? "callerCandidates" : "calleeCandidates";
@@ -383,62 +492,32 @@ async function startVoiceChat(roomId, isCaller) {
     if (isCaller) {
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      await voiceRef.child("offer").set({
-        sdp: offer.sdp,
-        type: offer.type
-      });
+      await voiceRef.child("offer").set({ sdp: offer.sdp, type: offer.type });
 
       voiceRef.child("answer").on("value", async snap => {
         const ans = snap.val();
         if (ans && !peerConnection.currentRemoteDescription) {
-          await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(ans)
-          );
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(ans));
         }
       });
-
       voiceRef.child("calleeCandidates").on("child_added", snap => {
         const c = snap.val();
-        if (c) {
-          peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(err =>
-            console.warn("ICE candidate error:", err)
-          );
-        }
+        if (c) peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(console.warn);
       });
     } else {
       voiceRef.child("offer").once("value", async snap => {
         const off = snap.val();
         if (off) {
-          await peerConnection.setRemoteDescription(
-            new RTCSessionDescription(off)
-          );
-
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(off));
           const ans = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(ans);
-
-          await voiceRef.child("answer").set({
-            sdp: ans.sdp,
-            type: ans.type
-          });
+          await voiceRef.child("answer").set({ sdp: ans.sdp, type: ans.type });
         }
       });
-
       voiceRef.child("callerCandidates").on("child_added", snap => {
         const c = snap.val();
-        if (c) {
-          peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(err =>
-            console.warn("ICE candidate error:", err)
-          );
-        }
+        if (c) peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(console.warn);
       });
-    }
-
-    // If the user already enabled the microphone before the peer connection
-    // finished, attach the existing track to the negotiated sender.
-    if (localVoiceStream) {
-      const track = localVoiceStream.getAudioTracks()[0] || null;
-      await audioTransceiver.sender.replaceTrack(track);
-      if (track) track.enabled = !isMicMuted;
     }
   } catch (err) {
     console.warn("WebRTC voice init error:", err);
@@ -447,7 +526,7 @@ async function startVoiceChat(roomId, isCaller) {
 
 async function toggleMicrophone() {
   if (!currentRoomCode) {
-    alert("முதலில் ஒரு ரூமை உருவாக்கி அல்லது இணைந்து நண்பருடன் விளையாடத் தொடங்குங்கள்!");
+    alert("Please create or join a room first.");
     return;
   }
 
@@ -458,95 +537,39 @@ async function toggleMicrophone() {
   try {
     if (!localVoiceStream) {
       localVoiceStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        },
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: false
       });
-    }
-
-    const audioTrack = localVoiceStream.getAudioTracks()[0];
-
-    // Replace the negotiated WebRTC sender track instead of addTrack().
-    // addTrack() after offer/answer would require another renegotiation and
-    // is the main reason the old version could show "mic on" but no sound.
-    if (peerConnection && audioTrack) {
-      const sender = peerConnection.getSenders().find(
-        s => s.track && s.track.kind === "audio"
-      );
-
-      const audioSender = sender || (
-        peerConnection.getTransceivers().find(
-          t => t.receiver && t.receiver.track && t.receiver.track.kind === "audio"
-        ) || {}
-      ).sender;
-
-      if (audioSender) {
-        await audioSender.replaceTrack(audioTrack);
-      }
+      const track = localVoiceStream.getAudioTracks()[0];
+      if (audioTransceiver && track) await audioTransceiver.sender.replaceTrack(track);
+      else if (peerConnection && track) peerConnection.addTrack(track, localVoiceStream);
     }
 
     isMicMuted = !isMicMuted;
-    audioTrack.enabled = !isMicMuted;
+    localVoiceStream.getAudioTracks().forEach(t => t.enabled = !isMicMuted);
+
+    const audio = document.getElementById("remoteAudio");
+    if (audio) {
+      audio.muted = false;
+      audio.volume = 1.0;
+      audio.play().catch(() => {});
+    }
 
     if (!isMicMuted) {
-      if (micBtn) {
-        micBtn.textContent = "🔴 மைக் ஆஃப் (Mute)";
-        micBtn.classList.add("active-mic");
-      }
+      if (micBtn) { micBtn.textContent = "🔴 Mute"; micBtn.classList.add("active-mic"); }
       if (dot) dot.className = "voice-dot on";
-      if (txt) {
-        txt.textContent = "நேரலை மைக்: ஆன் (பேசலாம்)";
-        txt.style.color = "#34d399";
-      }
-
-      // A microphone click is a user gesture, so also use it to unlock
-      // remote audio playback on browsers that block autoplay.
-      const remoteAudio = document.getElementById("remoteAudio");
-      if (remoteAudio) {
-        remoteAudio.muted = speakerMuted;
-        remoteAudio.play().catch(() => {});
-      }
+      if (txt) { txt.textContent = "Live Voice: ON"; txt.style.color = "#34d399"; }
     } else {
-      if (micBtn) {
-        micBtn.textContent = "🎙️ மைக் ஆன் செய் (Turn Mic ON)";
-        micBtn.classList.remove("active-mic");
-      }
+      if (micBtn) { micBtn.textContent = "🎙️ Turn Mic ON"; micBtn.classList.remove("active-mic"); }
       if (dot) dot.className = "voice-dot off";
-      if (txt) {
-        txt.textContent = "வாய்ஸ் சாட்: ஆஃப் (Mic OFF)";
-        txt.style.color = "#94a3b8";
-      }
+      if (txt) { txt.textContent = "Live Voice: OFF"; txt.style.color = "#94a3b8"; }
     }
   } catch (err) {
-    alert("மைக் அனுமதி வழங்கப்படவில்லை: " + err.message);
+    console.error("Microphone error:", err);
+    alert("Microphone access failed: " + err.message);
   }
 }
 
-// Speaker output mute/unmute. This is separate from the microphone:
-// Mic OFF = opponent cannot hear you.
-// Speaker OFF = you cannot hear the opponent.
-function toggleSpeaker() {
-  const audio = document.getElementById("remoteAudio");
-  const btn = document.getElementById("toggleSpeakerBtn");
-  if (!audio) return;
-
-  speakerMuted = !speakerMuted;
-  audio.muted = speakerMuted;
-
-  if (btn) {
-    btn.textContent = speakerMuted
-      ? "🔇 ஸ்பீக்கர் ஆஃப் (Mute)"
-      : "🔊 ஸ்பீக்கர் ஆன் (Unmute)";
-    btn.classList.toggle("active-speaker", !speakerMuted);
-  }
-
-  if (!speakerMuted) {
-    audio.play().catch(() => {});
-  }
-}
 
 // B Chess Analyzer — Stockfish Engine + Audio FX + Real-time Blunder Engine + Captured Pieces + Copy Report
 
@@ -1694,6 +1717,31 @@ $(document).ready(function() {
 
   const signoutBtn = document.getElementById('signOutBtn');
   if (signoutBtn) signoutBtn.addEventListener('click', handleLogout);
+  const editProfileBtn = document.getElementById('editProfileBtn');
+  if (editProfileBtn) editProfileBtn.addEventListener('click', () => openProfileModal(false));
+
+  const saveProfileBtn = document.getElementById('saveProfileBtn');
+  if (saveProfileBtn) saveProfileBtn.addEventListener('click', saveUserProfile);
+
+  const cancelProfileBtn = document.getElementById('cancelProfileBtn');
+  if (cancelProfileBtn) cancelProfileBtn.addEventListener('click', closeProfileModal);
+
+  const profilePhotoInput = document.getElementById('profilePhotoInput');
+  if (profilePhotoInput) {
+    profilePhotoInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const photo = await readAndResizeProfilePhoto(file);
+        const preview = document.getElementById('profilePreviewImg');
+        const fallback = document.getElementById('profilePreviewFallback');
+        if (preview) { preview.src = photo; preview.style.display = 'block'; }
+        if (fallback) fallback.style.display = 'none';
+      } catch (err) {
+        console.error("Profile image preview error:", err);
+      }
+    });
+  }
 
   const createBtn = document.getElementById('createRoomBtn');
   if (createBtn) createBtn.addEventListener('click', createFriendRoom);
@@ -1706,8 +1754,6 @@ $(document).ready(function() {
 
   const micBtn = document.getElementById('toggleMicBtn');
   if (micBtn) micBtn.addEventListener('click', toggleMicrophone);
-  const speakerBtn = document.getElementById('toggleSpeakerBtn');
-  if (speakerBtn) speakerBtn.addEventListener('click', toggleSpeaker);
 
   const drawBtn = document.getElementById('offerDrawBtn');
   if (drawBtn) drawBtn.addEventListener('click', offerDrawGame);
