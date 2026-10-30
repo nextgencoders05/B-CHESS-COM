@@ -1,29 +1,34 @@
 ========================================================================
-B CHESS ANALYZER - FINAL PRODUCTION PACK (ALL ORIGINAL FEATURES INTACT)
+B CHESS ANALYZER - FINAL PRODUCTION PACK (WITH FIREBASE & POPUP FIX)
 ========================================================================
 
-1. FIX FOR "Chessboard Error 1003":
-   - The Chessboard initialization now safely binds to the actual DOM node
-     after $(document).ready() fires, supporting both #board and #myBoard
-     elements without DOM query mismatch.
+1. POPUP BLOCKER ISSUE FIXED:
+   - Previously, Google Login was being triggered automatically on page load
+     inside onAuthStateChanged, which caused Chrome/Edge to detect an unprompted
+     popup and block it immediately with "Firebase: Error (auth/popup-blocked)".
+   - Now, Google Login is triggered ONLY when the user directly clicks the
+     "Sign in with Google" button or attempts to Create/Join a room.
+   - Added automatic fallback to signInWithRedirect if popups are ever blocked.
 
-2. PRESERVED ORIGINAL FEATURES:
-   - Header: "B Chess Analyzer" with tagline
-   - Toolbar buttons: "Sound: ON", "Green & White", "Arrow: ON"
+2. FIREBASE CONFIGURATION UPDATED:
+   - Updated firebaseConfig in script.js with your project credentials:
+     * Project ID: b-chess-analyser
+     * Database URL: https://b-chess-analyser-default-rtdb.firebaseio.com
+     * Storage Bucket: b-chess-analyser.firebasestorage.app
+     * Messaging Sender ID: 338871638210
+     * App ID: 1:338871638210:web:8653ca64fe66d120a13df6
+   - In your Firebase Console, click the 'Copy' icon next to apiKey and paste
+     it into apiKey: "..." in script.js line 8.
+
+3. ALL ORIGINAL FEATURES INTACT:
+   - Header: "B Chess Analyzer"
+   - Toolbar: "Sound: ON", "Green & White", "Arrow: ON"
    - Modes: [Analysis], [Play vs Bot], [Play with Friend]
-   - Evaluation bar (+0.00), Move History & Review tabs (Best, Blunders, etc.)
-   - Natural wooden move sound, capture sounds, and check/blunder alerts.
-
-3. NEW REQUESTED FEATURES FULLY INTEGRATED:
-   - Google Sign-in prompt on startup.
-   - Skill Level selection modal on first sign-in (Beginner 800, Intermediate 1200, Advanced 1600).
-   - In-game Draw offer & Resign buttons with automatic +/- 8 rating calculation.
-   - WebRTC Voice Chat with remote stream autoplay fix.
-   - Live in-game chat box during multiplayer rooms.
+   - Evaluation Bar, Move History, Captured Pieces, Accuracy
+   - Natural wooden sound effects, WebRTC Voice Chat, Live Chat & +/- 8 Rating.
 
 HOW TO DEPLOY:
 1. Extract this ZIP file.
-2. Replace index.html, style.css, and script.js in your GitHub repository.
-3. In script.js, insert your original Firebase config object (apiKey, etc.).
-4. Commit changes.
+2. In script.js line 8, verify your apiKey string from your Firebase console.
+3. Replace index.html, style.css, and script.js in your GitHub repo and Commit!
 ========================================================================

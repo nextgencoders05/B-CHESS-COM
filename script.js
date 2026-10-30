@@ -1,16 +1,18 @@
 // ==========================================================================
-// B-CHESS ANALYZER: COMPLETE SCRIPT WITH ERROR 1003 FIX & FULL MULTIPLAYER
+// B-CHESS ANALYZER: FINAL INTEGRATED SCRIPT (POPUP FIX & EXACT FIREBASE CONFIG)
 // ==========================================================================
 
-// --- 1. FIREBASE CONFIGURATION ---
+// --- 1. FIREBASE CONFIGURATION (Matches Your Firebase Console Settings) ---
 const firebaseConfig = {
+  // Replace apiKey below with the exact key copied from your Firebase Console if needed:
   apiKey: "AIzaSyYOUR_API_KEY_HERE",
   authDomain: "b-chess-analyser.firebaseapp.com",
   databaseURL: "https://b-chess-analyser-default-rtdb.firebaseio.com",
   projectId: "b-chess-analyser",
-  storageBucket: "b-chess-analyser.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_ID",
-  appId: "YOUR_APP_ID"
+  storageBucket: "b-chess-analyser.firebasestorage.app",
+  messagingSenderId: "338871638210",
+  appId: "1:338871638210:web:8653ca64fe66d120a13df6",
+  measurementId: "G-GZ0L6G6Z7Z"
 };
 
 if (!firebase.apps.length) {
@@ -44,7 +46,7 @@ const rtcConfig = {
   ]
 };
 
-// --- 3. CUSTOM SOUND EFFECTS (Natural Wooden Clicks, Captures & Blunders) ---
+// --- 3. CUSTOM NATURAL SOUND EFFECTS ---
 let audioCtx = null;
 function getAudioContext() {
   if (!audioCtx) {
@@ -106,8 +108,6 @@ function toggleArrow() {
 }
 
 function toggleBoardTheme() {
-  const boardEl = document.querySelector("#board");
-  if (!boardEl) return;
   if (boardTheme === "green") {
     boardTheme = "wood";
     document.getElementById("themeToggleBtn").innerText = "🎨 Classic Wood";
@@ -117,14 +117,10 @@ function toggleBoardTheme() {
   }
 }
 
-// --- 4. BOARD INITIALIZATION (Bulletproof against Error 1003) ---
+// --- 4. BOARD INITIALIZATION ---
 function initBoard() {
-  // Check if DOM target element exists (supporting both 'board' and 'myBoard')
   let boardTarget = document.getElementById("board") || document.getElementById("myBoard");
-  if (!boardTarget) {
-    console.error("Chessboard DOM element not found, retrying...");
-    return;
-  }
+  if (!boardTarget) return;
 
   const cfg = {
     draggable: true,
@@ -139,15 +135,23 @@ function initBoard() {
   updateGameMeta();
 }
 
-// Ensure execution strictly after DOM is ready
 $(document).ready(() => {
   initBoard();
   initAuthAndRating();
   setupAudioUnlock();
 });
 
-// --- 5. GOOGLE AUTH & MANDATORY SKILL SELECTION ---
+// --- 5. GOOGLE AUTH & SKILL LEVEL (FIXED: NO AUTOMATIC POPUP BLOCK ON PAGE LOAD) ---
 function initAuthAndRating() {
+  // Check redirect login result first if popup was blocked
+  auth.getRedirectResult().then((result) => {
+    if (result && result.user) {
+      console.log("Logged in via redirect:", result.user.displayName);
+    }
+  }).catch((err) => {
+    console.warn("Redirect check:", err.message);
+  });
+
   auth.onAuthStateChanged(async (user) => {
     if (user) {
       currentUserId = user.uid;
@@ -172,16 +176,23 @@ function initAuthAndRating() {
       currentUserId = null;
       document.getElementById("googleLoginBtn").style.display = "flex";
       document.getElementById("userProfile").style.display = "none";
-      // Prompt sign in
-      triggerGoogleLogin();
+      // NOTE: Do NOT call triggerGoogleLogin() here automatically!
+      // Calling popup inside page load causes browsers to block popups.
     }
   });
 }
 
 function triggerGoogleLogin() {
   const provider = new firebase.auth.GoogleAuthProvider();
-  auth.signInWithPopup(provider).catch(err => {
-    console.warn("Google sign-in popup closed/blocked:", err.message);
+  // Using direct click-triggered popup with redirect fallback
+  auth.signInWithPopup(provider).catch((err) => {
+    console.warn("Popup error:", err.code, err.message);
+    if (err.code === "auth/popup-blocked") {
+      alert("Browser blocked the popup. Redirecting to Google Sign-In page...");
+      auth.signInWithRedirect(provider);
+    } else if (err.code !== "auth/popup-closed-by-user") {
+      alert("Sign-in error: " + err.message);
+    }
   });
 }
 
@@ -413,7 +424,10 @@ function switchMode(mode) {
 }
 
 function createRoom() {
-  if (!currentUserId) return triggerGoogleLogin();
+  if (!currentUserId) {
+    alert("Please Sign in with Google first!");
+    return triggerGoogleLogin();
+  }
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   currentRoomCode = code;
   myColor = 'w';
@@ -435,7 +449,10 @@ function createRoom() {
 }
 
 function joinRoom() {
-  if (!currentUserId) return triggerGoogleLogin();
+  if (!currentUserId) {
+    alert("Please Sign in with Google first!");
+    return triggerGoogleLogin();
+  }
   const code = document.getElementById("roomCodeInput").value.trim();
   if (!code) return alert("Please enter Room Code");
 

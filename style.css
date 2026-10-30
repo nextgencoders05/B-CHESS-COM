@@ -130,6 +130,12 @@ body {
   font-weight: 600;
   cursor: pointer;
   font-size: 0.85rem;
+  transition: transform 0.1s ease;
+}
+
+.btn-google-login:hover {
+  background: #f1f5f9;
+  transform: translateY(-1px);
 }
 
 .btn-google-login img {
