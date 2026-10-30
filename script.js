@@ -24,6 +24,7 @@ let currentUserName = "Player";
 let currentUserRating = 800;
 let currentRoomCode = null;
 let myOnlineColor = 'w';
+let isOnlineMatchActive = false;
 
 // WebRTC Live Voice Chat State
 let peerConnection = null;
@@ -35,6 +36,41 @@ const rtcConfig = {
     { urls: "stun:stun1.l.google.com:19302" }
   ]
 };
+
+// --- MODE LOCKING (Blocks switching to Analysis / Bot during live match) ---
+function lockModeButtons(lock) {
+  isOnlineMatchActive = lock;
+  const analyzeBtn = document.getElementById('modeAnalyzeBtn');
+  const botBtn = document.getElementById('modeBotBtn');
+
+  if (lock) {
+    if (analyzeBtn) {
+      analyzeBtn.disabled = true;
+      analyzeBtn.style.opacity = "0.4";
+      analyzeBtn.style.cursor = "not-allowed";
+      analyzeBtn.title = "மேட்ச் முடியும் வரை அனலைஸ் செல்ல முடியாது";
+    }
+    if (botBtn) {
+      botBtn.disabled = true;
+      botBtn.style.opacity = "0.4";
+      botBtn.style.cursor = "not-allowed";
+      botBtn.title = "மேட்ச் முடியும் வரை பாட் மோடு செல்ல முடியாது";
+    }
+  } else {
+    if (analyzeBtn) {
+      analyzeBtn.disabled = false;
+      analyzeBtn.style.opacity = "1";
+      analyzeBtn.style.cursor = "pointer";
+      analyzeBtn.title = "";
+    }
+    if (botBtn) {
+      botBtn.disabled = false;
+      botBtn.style.opacity = "1";
+      botBtn.style.cursor = "pointer";
+      botBtn.title = "";
+    }
+  }
+}
 
 // --- GOOGLE SIGN-IN (Popup Blocker Fix & Redirect Fallback) ---
 function triggerGoogleLogin() {
@@ -119,6 +155,7 @@ function createFriendRoom() {
   board.orientation('white');
   game.reset();
   board.start();
+  lockModeButtons(true);
 
   database.ref("rooms/" + code).set({
     creatorId: currentUserId,
@@ -152,6 +189,7 @@ function joinFriendRoom() {
     currentRoomCode = code;
     myOnlineColor = 'b';
     board.orientation('black');
+    lockModeButtons(true);
 
     roomRef.update({
       guestId: currentUserId,
@@ -197,12 +235,14 @@ function listenToRoom(code, isCreator) {
     if (val.drawOffer && val.drawOffer !== currentUserId) {
       if (confirm("Opponent offered a draw. Accept?")) {
         roomRef.update({ gameOver: true, result: 'draw', drawOffer: null });
+        lockModeButtons(false);
       } else {
         roomRef.child("drawOffer").remove();
       }
     }
 
     if (val.gameOver) {
+      lockModeButtons(false);
       if (val.result === 'resigned') {
         const iWon = val.winner === currentUserId;
         alert(iWon ? "Opponent resigned! You won (+8 Rating)!" : "You resigned (-8 Rating).");
@@ -231,6 +271,7 @@ function checkOnlineTrigger(move) {
         const val = snap.val();
         const opponentId = (val.creatorId === currentUserId) ? val.guestId : val.creatorId;
         roomRef.update({ gameOver: true, result: 'checkmate', winner: currentUserId });
+        lockModeButtons(false);
         if (opponentId) {
           database.ref("users/" + currentUserId + "/rating").transaction(r => (r || 800) + 8);
           database.ref("users/" + opponentId + "/rating").transaction(r => Math.max(100, (r || 800) - 8));
@@ -255,6 +296,7 @@ function resignGame() {
       winner: opponentId,
       loser: currentUserId
     });
+    lockModeButtons(false);
     if (opponentId) database.ref("users/" + opponentId + "/rating").transaction(r => (r || 800) + 8);
     database.ref("users/" + currentUserId + "/rating").transaction(r => Math.max(100, (r || 800) - 8));
   });
@@ -307,14 +349,7 @@ function escapeHtml(str) {
 // --- WEBRTC LIVE VOICE CHAT ---
 async function startVoiceChat(roomId, isCaller) {
   try {
-    localVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localVoiceStream.getAudioTracks().forEach(t => t.enabled = false);
-
-    const btn = document.getElementById("toggleMicBtn");
-    if (btn) btn.disabled = false;
-
     peerConnection = new RTCPeerConnection(rtcConfig);
-    localVoiceStream.getTracks().forEach(track => peerConnection.addTrack(track, localVoiceStream));
 
     peerConnection.ontrack = (event) => {
       const audio = document.getElementById("remoteAudio");
@@ -362,19 +397,60 @@ async function startVoiceChat(roomId, isCaller) {
       });
     }
   } catch (err) {
-    console.warn("Microphone not available:", err);
+    console.warn("WebRTC voice init error:", err);
   }
 }
 
-function toggleMicrophone() {
-  if (!localVoiceStream) return;
-  isMicMuted = !isMicMuted;
-  localVoiceStream.getAudioTracks().forEach(t => t.enabled = !isMicMuted);
+async function toggleMicrophone() {
+  if (!currentRoomCode) {
+    alert("முதலில் ஒரு ரூமை உருவாக்கி அல்லது இணைந்து நண்பருடன் விளையாடத் தொடங்குங்கள்!");
+    return;
+  }
 
-  const btn = document.getElementById("toggleMicBtn");
-  if (btn) {
-    btn.textContent = isMicMuted ? "🎤 Unmute" : "🔇 Mute";
-    btn.classList.toggle("active-pill", !isMicMuted);
+  const micBtn = document.getElementById("toggleMicBtn");
+  const dot = document.getElementById("voiceStatusDot");
+  const txt = document.getElementById("voiceStatusText");
+
+  try {
+    if (!localVoiceStream) {
+      localVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      if (peerConnection) {
+        localVoiceStream.getTracks().forEach(track => {
+          peerConnection.addTrack(track, localVoiceStream);
+        });
+      }
+    }
+
+    isMicMuted = !isMicMuted;
+    localVoiceStream.getAudioTracks().forEach(t => t.enabled = !isMicMuted);
+
+    if (!isMicMuted) {
+      if (micBtn) {
+        micBtn.textContent = "🔴 மைக் ஆஃப் (Mute)";
+        micBtn.classList.add("active-mic");
+      }
+      if (dot) {
+        dot.className = "voice-dot on";
+      }
+      if (txt) {
+        txt.textContent = "நேரலை மைக்: ஆன் (பேசலாம்)";
+        txt.style.color = "#34d399";
+      }
+    } else {
+      if (micBtn) {
+        micBtn.textContent = "🎙️ மைக் ஆன் செய் (Turn Mic ON)";
+        micBtn.classList.remove("active-mic");
+      }
+      if (dot) {
+        dot.className = "voice-dot off";
+      }
+      if (txt) {
+        txt.textContent = "வாய்ஸ் சாட்: ஆஃப் (Mic OFF)";
+        txt.style.color = "#94a3b8";
+      }
+    }
+  } catch (err) {
+    alert("மைக் அனுமதி வழங்கப்படவில்லை: " + err.message);
   }
 }
 
@@ -1335,6 +1411,11 @@ function updateUI() {
 }
 
 function setGameMode(mode) {
+  if (isOnlineMatchActive && mode !== 'friend') {
+    alert("நண்பருடன் நேரலை மேட்ச் நடந்துகொண்டிருக்கிறது! விளையாடும் போது அனலைஸ் அல்லது பாட் மோடிற்கு மாற முடியாது.\n\nமேட்ச் முடிந்த பின், டிரா அல்லது ரிசைன் செய்த பிறகே பிற மோடுகளுக்கு மாற முடியும்.");
+    return;
+  }
+
   currentMode = mode;
   selectedSquare = null;
   clearClickHighlights();

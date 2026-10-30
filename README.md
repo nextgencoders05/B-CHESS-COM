@@ -1,1 +1,1 @@
-# B Chess Analyzer - Full Working Project with Firebase Auth, Multiplayer, Audio & Stockfish Engine
+# B Chess Analyzer - Complete Working Project with Live Voice Chat, Fair Play Match Lock & Stockfish Engine

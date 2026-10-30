@@ -860,7 +860,7 @@ body.wood-theme .black-3c85d {
 
 
 /* ==========================================================================
-   MULTIPLAYER, GOOGLE AUTH, LIVE CHAT & SKILL MODAL STYLES
+   MULTIPLAYER, GOOGLE AUTH, LIVE CHAT, VOICE MIC & SKILL MODAL STYLES
    ========================================================================== */
 
 /* Top bar Google Auth */
@@ -953,12 +953,19 @@ body.wood-theme .black-3c85d {
 
 .active-room-bar {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 8px;
   background: #0e1e24;
   border: 1px solid #1a3c48;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border-radius: 8px;
+}
+
+.active-room-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
@@ -975,6 +982,60 @@ body.wood-theme .black-3c85d {
 
 .resign-danger-btn:hover {
   background: #b91c1c !important;
+}
+
+/* Voice Chat Row */
+.voice-chat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #071318;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #152b33;
+}
+
+.voice-status-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.voice-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  transition: all 0.2s ease;
+}
+
+.voice-dot.off {
+  background: #64748b;
+  box-shadow: none;
+}
+
+.voice-dot.on {
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.voice-text {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.mic-action-btn {
+  background: #0284c7 !important;
+  color: #fff !important;
+  font-weight: 600 !important;
+  padding: 5px 10px !important;
+  font-size: 11px !important;
+  transition: all 0.2s ease;
+}
+
+.mic-action-btn.active-mic {
+  background: #ef4444 !important;
 }
 
 /* In-Game Live Chat */
