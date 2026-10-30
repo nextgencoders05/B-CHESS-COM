@@ -78,6 +78,55 @@ function lockModeButtons(lock) {
   }
 }
 
+// --- TERMS & CONDITIONS ---
+const TERMS_VERSION = '1.0';
+const TERMS_STORAGE_KEY = 'bChessTermsAcceptedVersion';
+
+function hasAcceptedTerms() {
+  return localStorage.getItem(TERMS_STORAGE_KEY) === TERMS_VERSION;
+}
+
+function showTermsModal() {
+  const modal = document.getElementById('termsModal');
+  const checkbox = document.getElementById('termsAcceptCheckbox');
+  const error = document.getElementById('termsError');
+  if (!modal) return;
+  if (checkbox) checkbox.checked = false;
+  if (error) error.textContent = '';
+  modal.style.display = 'flex';
+}
+
+function closeTermsModal() {
+  const modal = document.getElementById('termsModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function requireTermsAccepted() {
+  if (hasAcceptedTerms()) return true;
+  showTermsModal();
+  return false;
+}
+
+function acceptTermsAndContinue() {
+  const checkbox = document.getElementById('termsAcceptCheckbox');
+  const error = document.getElementById('termsError');
+  if (!checkbox || !checkbox.checked) {
+    if (error) error.textContent = 'Please tick the checkbox to continue.';
+    return;
+  }
+  localStorage.setItem(TERMS_STORAGE_KEY, TERMS_VERSION);
+  closeTermsModal();
+
+  // Preserve the existing first-time profile setup flow after terms acceptance.
+  const user = auth.currentUser;
+  if (user) {
+    database.ref("users/" + user.uid).once("value").then((snap) => {
+      const data = snap.val() || {};
+      if (!data.username) openProfileModal(true);
+    });
+  }
+}
+
 // --- GOOGLE SIGN-IN (Popup Blocker Fix & Redirect Fallback) ---
 function triggerGoogleLogin() {
   const provider = new firebase.auth.GoogleAuthProvider();
@@ -107,7 +156,12 @@ auth.onAuthStateChanged(async (user) => {
     currentUserPhoto = data.photoData || user.photoURL || "";
     updateProfileUI();
 
-    if (!data.username) openProfileModal(true);
+    // After Google sign-in, require Terms & Conditions acceptance once per terms version.
+    if (!hasAcceptedTerms()) {
+      showTermsModal();
+    } else if (!data.username) {
+      openProfileModal(true);
+    }
 
     if (!data.rating) {
       const modal = document.getElementById("skillModal");
@@ -268,6 +322,7 @@ function createFriendRoom() {
     alert("Please Sign in with Google first!");
     return triggerGoogleLogin();
   }
+  if (!requireTermsAccepted()) return;
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   currentRoomCode = code;
   myOnlineColor = 'w';
@@ -297,6 +352,7 @@ function joinFriendRoom() {
     alert("Please Sign in with Google first!");
     return triggerGoogleLogin();
   }
+  if (!requireTermsAccepted()) return;
   const code = document.getElementById("roomCodeInput").value.trim().toUpperCase();
   if (!code) return alert("Enter Room Code");
 
@@ -1834,6 +1890,10 @@ function setGameMode(mode) {
   if (friendBtn) friendBtn.classList.toggle('active', mode === 'friend');
 
   if (mode === 'bot') {
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
+    if (undoBtn) undoBtn.style.display = '';
+    if (redoBtn) redoBtn.style.display = '';
     if (botControls) botControls.style.display = 'flex';
     if (friendControls) friendControls.style.display = 'none';
     if (chatTabBtn) chatTabBtn.style.display = 'none';
@@ -1844,12 +1904,20 @@ function setGameMode(mode) {
   } else if (mode === 'friend') {
     if (botControls) botControls.style.display = 'none';
     if (friendControls) friendControls.style.display = 'flex';
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
+    if (undoBtn) undoBtn.style.display = 'none';
+    if (redoBtn) redoBtn.style.display = 'none';
     if (chatTabBtn) chatTabBtn.style.display = 'inline-block';
     if (playBestBtn) playBestBtn.style.display = 'none';
     document.getElementById('panelPrimaryLabel').textContent = 'Friend Match';
     document.getElementById('bestMoveArrow').setAttribute('visibility', 'hidden');
     clearHighlights();
   } else {
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
+    if (undoBtn) undoBtn.style.display = '';
+    if (redoBtn) redoBtn.style.display = '';
     if (botControls) botControls.style.display = 'none';
     if (friendControls) friendControls.style.display = 'none';
     if (chatTabBtn) chatTabBtn.style.display = 'none';
@@ -1987,6 +2055,11 @@ $(document).ready(function() {
   });
 
   document.getElementById('modeBotBtn').addEventListener('click', () => {
+    if (!currentUserId) {
+      alert('Please Sign in with Google first!');
+      return triggerGoogleLogin();
+    }
+    if (!requireTermsAccepted()) return;
     setGameMode('bot');
     startNewBotGame();
   });
@@ -1994,9 +2067,17 @@ $(document).ready(function() {
   const friendBtn = document.getElementById('modeFriendBtn');
   if (friendBtn) {
     friendBtn.addEventListener('click', () => {
+      if (!currentUserId) {
+        alert('Please Sign in with Google first!');
+        return triggerGoogleLogin();
+      }
+      if (!requireTermsAccepted()) return;
       setGameMode('friend');
     });
   }
+
+  const termsAcceptBtn = document.getElementById('acceptTermsBtn');
+  if (termsAcceptBtn) termsAcceptBtn.addEventListener('click', acceptTermsAndContinue);
   const loginBtn = document.getElementById('googleLoginBtn');
   if (loginBtn) loginBtn.addEventListener('click', triggerGoogleLogin);
 
@@ -2069,6 +2150,7 @@ $(document).ready(function() {
 
   // Undo Button
   document.getElementById('undoBtn').addEventListener('click', () => {
+    if (currentMode === 'friend') return;
     if (isBotThinking) return;
     clearClickHighlights();
     selectedSquare = null;
@@ -2092,7 +2174,7 @@ $(document).ready(function() {
 
   // Redo Button
   document.getElementById('redoBtn').addEventListener('click', () => {
-    if (currentMode === 'bot' || isBotThinking) return;
+    if (currentMode === 'friend' || currentMode === 'bot' || isBotThinking) return;
     clearClickHighlights();
     selectedSquare = null;
     if (redoStack.length > 0) {

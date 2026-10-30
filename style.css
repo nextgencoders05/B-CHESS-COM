@@ -1233,3 +1233,34 @@ body.wood-theme .black-3c85d {
 .profile-preview-fallback { display:inline-flex; align-items:center; justify-content:center; background:#1e3a4a; color:#f8fafc; font-size:28px; font-weight:800; border:2px solid #38bdf8; }
 .profile-actions { display:flex; justify-content:center; gap:8px; }
 .profile-save-status { min-height:18px; margin-top:8px; font-size:11px; color:#fca5a5; text-align:center; }
+
+/* Terms & Conditions Modal */
+.terms-modal-window { max-width: 620px; }
+.terms-scroll-box {
+  max-height: 300px;
+  overflow-y: auto;
+  text-align: left;
+  padding: 14px 16px;
+  margin: 0 0 16px;
+  background: #0b1316;
+  border: 1px solid #263840;
+  border-radius: 10px;
+  color: #cbd5e1;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.terms-scroll-box h3 { color: #f8fafc; font-size: 13px; margin: 10px 0 4px; }
+.terms-scroll-box h3:first-child { margin-top: 0; }
+.terms-scroll-box p { margin: 0 0 8px; }
+.terms-check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  text-align: left;
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.45;
+  cursor: pointer;
+}
+.terms-check-row input { margin-top: 2px; accent-color: #38bdf8; }
+.terms-error { min-height: 18px; margin-top: 7px; color: #fca5a5; font-size: 11px; text-align: center; }

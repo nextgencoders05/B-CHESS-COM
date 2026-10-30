@@ -331,6 +331,39 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="script.js"></script>
 
+  <!-- Terms & Conditions Modal -->
+  <div id="termsModal" class="skill-modal-overlay terms-modal-overlay" style="display: none;">
+    <div class="skill-modal-window terms-modal-window">
+      <div class="modal-chess-icon">♜</div>
+      <h2>Terms & Conditions</h2>
+      <p class="modal-subtext">Please read and accept the terms before using B Chess Analyzer.</p>
+      <div class="terms-scroll-box">
+        <h3>1. Acceptance</h3>
+        <p>By using B Chess Analyzer, you agree to these Terms & Conditions and to use the service responsibly.</p>
+        <h3>2. Fair Play</h3>
+        <p>Do not use the service for cheating, harassment, abuse, impersonation, or any activity that disrupts another player's experience.</p>
+        <h3>3. Play with Friends</h3>
+        <p>Online games are played between users through the multiplayer room system. Room codes should be shared only with people you intend to play with.</p>
+        <h3>4. Voice Chat</h3>
+        <p>If you use live voice chat, communicate respectfully. Do not use it for abusive, threatening, or unlawful content.</p>
+        <h3>5. Service Availability</h3>
+        <p>The service may be updated, interrupted, or changed from time to time. Game results and ratings may be affected by technical issues.</p>
+        <h3>6. Responsibility</h3>
+        <p>You are responsible for your use of the website and for keeping your Google account secure. Do not share your account credentials.</p>
+        <h3>7. Updates</h3>
+        <p>These terms may be updated when the service or its features change. Continued use after an update means you accept the revised terms.</p>
+      </div>
+      <label class="terms-check-row">
+        <input type="checkbox" id="termsAcceptCheckbox" />
+        <span>I have read and agree to the Terms &amp; Conditions.</span>
+      </label>
+      <div id="termsError" class="terms-error"></div>
+      <div class="profile-actions">
+        <button id="acceptTermsBtn" class="pill-btn highlight-btn">Accept &amp; Continue</button>
+      </div>
+    </div>
+  </div>
+
   <!-- User Profile Setup / Edit Modal -->
   <div id="profileModal" class="skill-modal-overlay" style="display: none;">
     <div class="skill-modal-window profile-modal-window">
