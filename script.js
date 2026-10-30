@@ -462,23 +462,75 @@ function escapeHtml(str) {
 }
 
 // --- WEBRTC LIVE VOICE CHAT ---
+let pendingRemoteCandidates = [];
+let remoteDescriptionReady = false;
+let isSpeakerMuted = false;
+
+async function addRemoteIceCandidate(candidate) {
+  if (!peerConnection || !candidate) return;
+  if (!remoteDescriptionReady) {
+    pendingRemoteCandidates.push(candidate);
+    return;
+  }
+  try {
+    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+  } catch (err) {
+    console.warn("ICE candidate error:", err);
+  }
+}
+
+async function flushRemoteIceCandidates() {
+  const queued = pendingRemoteCandidates.splice(0);
+  for (const candidate of queued) await addRemoteIceCandidate(candidate);
+}
+
+async function setRemoteDescriptionSafe(description) {
+  if (!peerConnection || !description) return;
+  await peerConnection.setRemoteDescription(new RTCSessionDescription(description));
+  remoteDescriptionReady = true;
+  await flushRemoteIceCandidates();
+}
+
+function setSpeakerState(muted) {
+  isSpeakerMuted = muted;
+  const audio = document.getElementById("remoteAudio");
+  const btn = document.getElementById("toggleSpeakerBtn");
+  if (audio) {
+    audio.muted = muted;
+    audio.volume = muted ? 0 : 1;
+    if (!muted) audio.play().catch(() => {});
+  }
+  if (btn) {
+    btn.textContent = muted ? "🔇 Speaker OFF" : "🔊 Speaker ON";
+    btn.classList.toggle("active-mic", !muted);
+  }
+}
+
 async function startVoiceChat(roomId, isCaller) {
   try {
+    // Clean state for a new room connection.
+    pendingRemoteCandidates = [];
+    remoteDescriptionReady = false;
     peerConnection = new RTCPeerConnection(rtcConfig);
 
-    // Reserve the audio media section BEFORE creating the offer.
-    // This fixes the old bug where the offer contained no audio track.
+    // Reserve the audio media section BEFORE creating the offer/answer.
+    // The remote side can therefore receive audio even when the mic is enabled later.
     audioTransceiver = peerConnection.addTransceiver("audio", { direction: "sendrecv" });
+
+    peerConnection.onconnectionstatechange = () => {
+      console.log("Voice connection state:", peerConnection.connectionState);
+    };
 
     peerConnection.ontrack = (event) => {
       const audio = document.getElementById("remoteAudio");
-      if (audio) {
-        const stream = event.streams?.[0] || new MediaStream([event.track]);
-        audio.srcObject = stream;
-        audio.muted = false;
-        audio.volume = 1.0;
-        audio.play().catch(e => console.log("Voice audio autoplay standby:", e));
-      }
+      if (!audio) return;
+      const stream = event.streams && event.streams[0]
+        ? event.streams[0]
+        : new MediaStream([event.track]);
+      audio.srcObject = stream;
+      audio.muted = isSpeakerMuted;
+      audio.volume = isSpeakerMuted ? 0 : 1;
+      audio.play().catch(e => console.log("Voice audio waiting for speaker interaction:", e));
     };
 
     const voiceRef = database.ref("rooms/" + roomId + "/voice");
@@ -490,33 +542,35 @@ async function startVoiceChat(roomId, isCaller) {
     };
 
     if (isCaller) {
-      const offer = await peerConnection.createOffer();
+      const offer = await peerConnection.createOffer({ offerToReceiveAudio: true });
       await peerConnection.setLocalDescription(offer);
       await voiceRef.child("offer").set({ sdp: offer.sdp, type: offer.type });
 
       voiceRef.child("answer").on("value", async snap => {
         const ans = snap.val();
         if (ans && !peerConnection.currentRemoteDescription) {
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(ans));
+          await setRemoteDescriptionSafe(ans);
         }
       });
+
       voiceRef.child("calleeCandidates").on("child_added", snap => {
         const c = snap.val();
-        if (c) peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(console.warn);
+        if (c) addRemoteIceCandidate(c);
       });
     } else {
-      voiceRef.child("offer").once("value", async snap => {
+      voiceRef.child("offer").on("value", async snap => {
         const off = snap.val();
-        if (off) {
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(off));
+        if (off && !peerConnection.currentRemoteDescription) {
+          await setRemoteDescriptionSafe(off);
           const ans = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(ans);
           await voiceRef.child("answer").set({ sdp: ans.sdp, type: ans.type });
         }
       });
+
       voiceRef.child("callerCandidates").on("child_added", snap => {
         const c = snap.val();
-        if (c) peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(console.warn);
+        if (c) addRemoteIceCandidate(c);
       });
     }
   } catch (err) {
@@ -535,23 +589,38 @@ async function toggleMicrophone() {
   const txt = document.getElementById("voiceStatusText");
 
   try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("Microphone is not available. Use HTTPS or localhost and allow browser microphone permission.");
+    }
+
     if (!localVoiceStream) {
       localVoiceStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1
+        },
         video: false
       });
       const track = localVoiceStream.getAudioTracks()[0];
-      if (audioTransceiver && track) await audioTransceiver.sender.replaceTrack(track);
-      else if (peerConnection && track) peerConnection.addTrack(track, localVoiceStream);
+      if (!track) throw new Error("No microphone audio track was created.");
+
+      if (audioTransceiver) {
+        await audioTransceiver.sender.replaceTrack(track);
+      } else if (peerConnection) {
+        peerConnection.addTrack(track, localVoiceStream);
+      }
     }
 
     isMicMuted = !isMicMuted;
     localVoiceStream.getAudioTracks().forEach(t => t.enabled = !isMicMuted);
 
+    // Clicking the mic is also a valid user gesture for starting remote playback.
     const audio = document.getElementById("remoteAudio");
     if (audio) {
-      audio.muted = false;
-      audio.volume = 1.0;
+      audio.muted = isSpeakerMuted;
+      audio.volume = isSpeakerMuted ? 0 : 1;
       audio.play().catch(() => {});
     }
 
@@ -567,6 +636,15 @@ async function toggleMicrophone() {
   } catch (err) {
     console.error("Microphone error:", err);
     alert("Microphone access failed: " + err.message);
+  }
+}
+
+async function toggleSpeaker() {
+  const audio = document.getElementById("remoteAudio");
+  if (!audio) return;
+  setSpeakerState(!isSpeakerMuted);
+  if (!isSpeakerMuted) {
+    try { await audio.play(); } catch (err) { console.log("Speaker playback waiting:", err); }
   }
 }
 
@@ -1754,6 +1832,8 @@ $(document).ready(function() {
 
   const micBtn = document.getElementById('toggleMicBtn');
   if (micBtn) micBtn.addEventListener('click', toggleMicrophone);
+  const speakerBtn = document.getElementById('toggleSpeakerBtn');
+  if (speakerBtn) speakerBtn.addEventListener('click', toggleSpeaker);
 
   const drawBtn = document.getElementById('offerDrawBtn');
   if (drawBtn) drawBtn.addEventListener('click', offerDrawGame);
