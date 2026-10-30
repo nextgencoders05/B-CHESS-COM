@@ -30,6 +30,7 @@ let isOnlineMatchActive = false;
 let peerConnection = null;
 let localVoiceStream = null;
 let isMicMuted = true;
+let speakerMuted = false;
 const rtcConfig = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
@@ -351,15 +352,27 @@ async function startVoiceChat(roomId, isCaller) {
   try {
     peerConnection = new RTCPeerConnection(rtcConfig);
 
+    // Create the audio transceiver BEFORE creating the offer/answer.
+    // This is important: both peers then negotiate an audio channel even
+    // when the microphone is initially muted.
+    const audioTransceiver = peerConnection.addTransceiver("audio", {
+      direction: "sendrecv"
+    });
+
     peerConnection.ontrack = (event) => {
       const audio = document.getElementById("remoteAudio");
       if (audio && event.streams[0]) {
         audio.srcObject = event.streams[0];
-        audio.play().catch(e => console.log("Voice audio autoplay standby:", e));
+        audio.muted = speakerMuted;
+        audio.volume = 1.0;
+        audio.play().catch(e => {
+          console.log("Voice audio autoplay waiting for user interaction:", e);
+        });
       }
     };
 
     const voiceRef = database.ref("rooms/" + roomId + "/voice");
+
     peerConnection.onicecandidate = (e) => {
       if (e.candidate) {
         const path = isCaller ? "callerCandidates" : "calleeCandidates";
@@ -370,31 +383,62 @@ async function startVoiceChat(roomId, isCaller) {
     if (isCaller) {
       const offer = await peerConnection.createOffer();
       await peerConnection.setLocalDescription(offer);
-      await voiceRef.child("offer").set({ sdp: offer.sdp, type: offer.type });
+      await voiceRef.child("offer").set({
+        sdp: offer.sdp,
+        type: offer.type
+      });
+
       voiceRef.child("answer").on("value", async snap => {
         const ans = snap.val();
         if (ans && !peerConnection.currentRemoteDescription) {
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(ans));
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(ans)
+          );
         }
       });
+
       voiceRef.child("calleeCandidates").on("child_added", snap => {
         const c = snap.val();
-        if (c) peerConnection.addIceCandidate(new RTCIceCandidate(c));
+        if (c) {
+          peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(err =>
+            console.warn("ICE candidate error:", err)
+          );
+        }
       });
     } else {
       voiceRef.child("offer").once("value", async snap => {
         const off = snap.val();
         if (off) {
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(off));
+          await peerConnection.setRemoteDescription(
+            new RTCSessionDescription(off)
+          );
+
           const ans = await peerConnection.createAnswer();
           await peerConnection.setLocalDescription(ans);
-          await voiceRef.child("answer").set({ sdp: ans.sdp, type: ans.type });
+
+          await voiceRef.child("answer").set({
+            sdp: ans.sdp,
+            type: ans.type
+          });
         }
       });
+
       voiceRef.child("callerCandidates").on("child_added", snap => {
         const c = snap.val();
-        if (c) peerConnection.addIceCandidate(new RTCIceCandidate(c));
+        if (c) {
+          peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(err =>
+            console.warn("ICE candidate error:", err)
+          );
+        }
       });
+    }
+
+    // If the user already enabled the microphone before the peer connection
+    // finished, attach the existing track to the negotiated sender.
+    if (localVoiceStream) {
+      const track = localVoiceStream.getAudioTracks()[0] || null;
+      await audioTransceiver.sender.replaceTrack(track);
+      if (track) track.enabled = !isMicMuted;
     }
   } catch (err) {
     console.warn("WebRTC voice init error:", err);
@@ -413,37 +457,64 @@ async function toggleMicrophone() {
 
   try {
     if (!localVoiceStream) {
-      localVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      if (peerConnection) {
-        localVoiceStream.getTracks().forEach(track => {
-          peerConnection.addTrack(track, localVoiceStream);
-        });
+      localVoiceStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        },
+        video: false
+      });
+    }
+
+    const audioTrack = localVoiceStream.getAudioTracks()[0];
+
+    // Replace the negotiated WebRTC sender track instead of addTrack().
+    // addTrack() after offer/answer would require another renegotiation and
+    // is the main reason the old version could show "mic on" but no sound.
+    if (peerConnection && audioTrack) {
+      const sender = peerConnection.getSenders().find(
+        s => s.track && s.track.kind === "audio"
+      );
+
+      const audioSender = sender || (
+        peerConnection.getTransceivers().find(
+          t => t.receiver && t.receiver.track && t.receiver.track.kind === "audio"
+        ) || {}
+      ).sender;
+
+      if (audioSender) {
+        await audioSender.replaceTrack(audioTrack);
       }
     }
 
     isMicMuted = !isMicMuted;
-    localVoiceStream.getAudioTracks().forEach(t => t.enabled = !isMicMuted);
+    audioTrack.enabled = !isMicMuted;
 
     if (!isMicMuted) {
       if (micBtn) {
         micBtn.textContent = "🔴 மைக் ஆஃப் (Mute)";
         micBtn.classList.add("active-mic");
       }
-      if (dot) {
-        dot.className = "voice-dot on";
-      }
+      if (dot) dot.className = "voice-dot on";
       if (txt) {
         txt.textContent = "நேரலை மைக்: ஆன் (பேசலாம்)";
         txt.style.color = "#34d399";
+      }
+
+      // A microphone click is a user gesture, so also use it to unlock
+      // remote audio playback on browsers that block autoplay.
+      const remoteAudio = document.getElementById("remoteAudio");
+      if (remoteAudio) {
+        remoteAudio.muted = speakerMuted;
+        remoteAudio.play().catch(() => {});
       }
     } else {
       if (micBtn) {
         micBtn.textContent = "🎙️ மைக் ஆன் செய் (Turn Mic ON)";
         micBtn.classList.remove("active-mic");
       }
-      if (dot) {
-        dot.className = "voice-dot off";
-      }
+      if (dot) dot.className = "voice-dot off";
       if (txt) {
         txt.textContent = "வாய்ஸ் சாட்: ஆஃப் (Mic OFF)";
         txt.style.color = "#94a3b8";
@@ -454,6 +525,28 @@ async function toggleMicrophone() {
   }
 }
 
+// Speaker output mute/unmute. This is separate from the microphone:
+// Mic OFF = opponent cannot hear you.
+// Speaker OFF = you cannot hear the opponent.
+function toggleSpeaker() {
+  const audio = document.getElementById("remoteAudio");
+  const btn = document.getElementById("toggleSpeakerBtn");
+  if (!audio) return;
+
+  speakerMuted = !speakerMuted;
+  audio.muted = speakerMuted;
+
+  if (btn) {
+    btn.textContent = speakerMuted
+      ? "🔇 ஸ்பீக்கர் ஆஃப் (Mute)"
+      : "🔊 ஸ்பீக்கர் ஆன் (Unmute)";
+    btn.classList.toggle("active-speaker", !speakerMuted);
+  }
+
+  if (!speakerMuted) {
+    audio.play().catch(() => {});
+  }
+}
 
 // B Chess Analyzer — Stockfish Engine + Audio FX + Real-time Blunder Engine + Captured Pieces + Copy Report
 
@@ -1613,6 +1706,8 @@ $(document).ready(function() {
 
   const micBtn = document.getElementById('toggleMicBtn');
   if (micBtn) micBtn.addEventListener('click', toggleMicrophone);
+  const speakerBtn = document.getElementById('toggleSpeakerBtn');
+  if (speakerBtn) speakerBtn.addEventListener('click', toggleSpeaker);
 
   const drawBtn = document.getElementById('offerDrawBtn');
   if (drawBtn) drawBtn.addEventListener('click', offerDrawGame);
