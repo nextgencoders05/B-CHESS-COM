@@ -24,3 +24,8 @@
 1. Download and extract this ZIP file.
 2. Replace `index.html`, `style.css`, and `script.js` in your GitHub repository with these updated files.
 3. Commit and push. Within 1 minute, your GitHub Pages site will be live with multiplayer and voice chat!
+
+## புதிய அப்டேட் (Google Login & Profile ID):
+- கூகுள் லாகின் (Google Sign-In) வசதி இணைக்கப்பட்டுள்ளது.
+- ஒவ்வொரு பயனருக்கும் ஒரு தனித்துவமான ஐடி (எ.கா: `BC-4821`) உருவாக்கப்பட்டு டேட்டாபேஸில் சேமிக்கப்படும்.
+- ப்ரொஃபைல் பெயர் மற்றும் படம் திரையின் மேல் பகுதியில் தோன்றும்.

@@ -994,3 +994,53 @@ body.wood-theme .black-3c85d {
     height: 18px;
   }
 }
+
+/* Google Auth & User Profile Header */
+.auth-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-profile-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #111a1f;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid #1e2d33;
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid #38bdf8;
+  object-fit: cover;
+}
+
+.user-info-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.user-display-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.user-id-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #38bdf8;
+  letter-spacing: 0.5px;
+}
+
+.logout-btn {
+  padding: 2px 8px !important;
+  font-size: 11px !important;
+  margin-left: 4px;
+}

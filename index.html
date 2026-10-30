@@ -24,6 +24,17 @@
         <button id="arrowToggleBtn" class="pill-btn active-pill">🏹 Arrow: ON</button>
         <button id="themeBtn" class="pill-btn">Green & White</button>
       </div>
+      <div class="auth-bar" id="authBar">
+        <button id="googleLoginBtn" class="pill-btn highlight-btn">Sign in with Google</button>
+        <div id="userProfile" class="user-profile-header" style="display: none;">
+          <img id="userAvatar" class="user-avatar" src="" alt="Avatar" />
+          <div class="user-info-text">
+            <span id="userName" class="user-display-name">Player</span>
+            <span id="userUniqueId" class="user-id-badge">ID: BC-0000</span>
+          </div>
+          <button id="logoutBtn" class="pill-btn logout-btn">Logout</button>
+        </div>
+      </div>
     </header>
 
     <!-- Main Content -->
@@ -302,8 +313,9 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
   <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
 
-  <!-- Firebase App & Realtime Database SDKs (Compat v9) -->
+  <!-- Firebase App, Auth & Realtime Database SDKs (Compat v9) -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
   <!-- PeerJS for WebRTC Direct Peer-to-Peer Voice Chat -->

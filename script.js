@@ -1307,7 +1307,72 @@ function copyFullAnalysisReport() {
   });
 }
 
+
+// --- FIREBASE AUTHENTICATION & USER PROFILE ---
+const auth = firebase.auth();
+const googleProvider = new firebase.auth.GoogleAuthProvider();
+let currentUser = null;
+let currentProfile = null;
+
+function setupAuth() {
+  const loginBtn = document.getElementById('googleLoginBtn');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const userProfileDiv = document.getElementById('userProfile');
+  const userNameSpan = document.getElementById('userName');
+  const userAvatarImg = document.getElementById('userAvatar');
+  const userIdSpan = document.getElementById('userUniqueId');
+
+  if (loginBtn) {
+    loginBtn.addEventListener('click', () => {
+      auth.signInWithPopup(googleProvider).catch(err => {
+        console.error('Google Sign-in Error:', err);
+        alert('Google Sign-in Error: ' + err.message);
+      });
+    });
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', () => {
+      auth.signOut();
+    });
+  }
+
+  auth.onAuthStateChanged(user => {
+    currentUser = user;
+    if (user) {
+      const userRef = database.ref('users/' + user.uid);
+      userRef.once('value').then(snapshot => {
+        let profile = snapshot.val();
+        if (!profile) {
+          const randomTag = 'BC-' + Math.floor(1000 + Math.random() * 9000);
+          profile = {
+            uid: user.uid,
+            name: user.displayName || 'Chess Player',
+            email: user.email,
+            photoURL: user.photoURL || '',
+            tag: randomTag,
+            createdAt: Date.now()
+          };
+          userRef.set(profile);
+        }
+        currentProfile = profile;
+        if (loginBtn) loginBtn.style.display = 'none';
+        if (userProfileDiv) userProfileDiv.style.display = 'flex';
+        if (userNameSpan) userNameSpan.textContent = profile.name;
+        if (userAvatarImg) userAvatarImg.src = profile.photoURL || 'https://chessboardjs.com/img/chesspieces/wikipedia/wP.png';
+        if (userIdSpan) userIdSpan.textContent = profile.tag;
+      });
+    } else {
+      currentProfile = null;
+      if (loginBtn) loginBtn.style.display = 'inline-block';
+      if (userProfileDiv) userProfileDiv.style.display = 'none';
+    }
+  });
+}
+
 $(document).ready(function() {
+  setupAuth();
+
   const config = {
     draggable: true,
     position: 'start',
