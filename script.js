@@ -1,18 +1,15 @@
-// ==========================================================================
-// B-CHESS ANALYZER: FINAL INTEGRATED SCRIPT (POPUP FIX & EXACT FIREBASE CONFIG)
-// ==========================================================================
-
-// --- 1. FIREBASE CONFIGURATION (Matches Your Firebase Console Settings) ---
+// ==========================================
+// 1. FIREBASE CONFIGURATION (EXACT MATCH)
+// ==========================================
 const firebaseConfig = {
-  // Replace apiKey below with the exact key copied from your Firebase Console if needed:
-  apiKey: "AIzaSyYOUR_API_KEY_HERE",
-  authDomain: "b-chess-analyser.firebaseapp.com",
-  databaseURL: "https://b-chess-analyser-default-rtdb.firebaseio.com",
-  projectId: "b-chess-analyser",
-  storageBucket: "b-chess-analyser.firebasestorage.app",
-  messagingSenderId: "338871638210",
-  appId: "1:338871638210:web:8653ca64fe66d120a13df6",
-  measurementId: "G-GZ0L6G6Z7Z"
+  apiKey: "AIzaSyDy0aKMuTzmPjg9Z8ebyFWtmT4mc9bRHG0",
+  authDomain: "b--chess-analyser.firebaseapp.com",
+  databaseURL: "https://b--chess-analyser-default-rtdb.firebaseio.com",
+  projectId: "b--chess-analyser",
+  storageBucket: "b--chess-analyser.firebasestorage.app",
+  messagingSenderId: "492429152963",
+  appId: "1:492429152963:web:21592594d7f4a145340876",
+  measurementId: "G-Y0EFN2WYE8"
 };
 
 if (!firebase.apps.length) {
@@ -21,24 +18,17 @@ if (!firebase.apps.length) {
 const auth = firebase.auth();
 const database = firebase.database();
 
-// --- 2. GLOBAL STATE ---
-let board = null;
-let game = new Chess();
-let soundEnabled = true;
-let arrowEnabled = true;
-let boardTheme = "green"; // green or wood
-let currentMode = "analysis"; // 'analysis', 'ai', 'friend'
-
+// Global User & Multiplayer State
 let currentUserId = null;
 let currentUserName = "Player";
 let currentUserRating = 800;
-
 let currentRoomCode = null;
-let myColor = 'w';
+let myOnlineColor = 'w';
+
+// WebRTC Live Voice Chat State
 let peerConnection = null;
 let localVoiceStream = null;
 let isMicMuted = true;
-
 const rtcConfig = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
@@ -46,155 +36,52 @@ const rtcConfig = {
   ]
 };
 
-// --- 3. CUSTOM NATURAL SOUND EFFECTS ---
-let audioCtx = null;
-function getAudioContext() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  return audioCtx;
-}
-
-function playSound(type) {
-  if (!soundEnabled) return;
-  try {
-    const ctx = getAudioContext();
-    if (ctx.state === "suspended") ctx.resume();
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-
-    const now = ctx.currentTime;
-    if (type === 'move') {
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(320, now);
-      osc.frequency.exponentialRampToValueAtTime(80, now + 0.08);
-      gain.gain.setValueAtTime(0.4, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
-      osc.start(now);
-      osc.stop(now + 0.08);
-    } else if (type === 'capture') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(440, now);
-      osc.frequency.exponentialRampToValueAtTime(140, now + 0.12);
-      gain.gain.setValueAtTime(0.6, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
-      osc.start(now);
-      osc.stop(now + 0.12);
-    } else if (type === 'check' || type === 'blunder') {
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(260, now);
-      osc.frequency.setValueAtTime(180, now + 0.1);
-      gain.gain.setValueAtTime(0.4, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
-      osc.start(now);
-      osc.stop(now + 0.25);
-    }
-  } catch (err) {
-    console.warn("Sound play error:", err);
-  }
-}
-
-function toggleSound() {
-  soundEnabled = !soundEnabled;
-  document.getElementById("soundToggleBtn").innerText = soundEnabled ? "🔊 Sound: ON" : "🔇 Sound: OFF";
-}
-
-function toggleArrow() {
-  arrowEnabled = !arrowEnabled;
-  document.getElementById("arrowToggleBtn").innerText = arrowEnabled ? "🏹 Arrow: ON" : "🏹 Arrow: OFF";
-}
-
-function toggleBoardTheme() {
-  if (boardTheme === "green") {
-    boardTheme = "wood";
-    document.getElementById("themeToggleBtn").innerText = "🎨 Classic Wood";
-  } else {
-    boardTheme = "green";
-    document.getElementById("themeToggleBtn").innerText = "🎨 Green & White";
-  }
-}
-
-// --- 4. BOARD INITIALIZATION ---
-function initBoard() {
-  let boardTarget = document.getElementById("board") || document.getElementById("myBoard");
-  if (!boardTarget) return;
-
-  const cfg = {
-    draggable: true,
-    position: 'start',
-    pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
-    onDragStart: handleDragStart,
-    onDrop: handleDrop,
-    onSnapEnd: () => board.position(game.fen())
-  };
-
-  board = Chessboard(boardTarget, cfg);
-  updateGameMeta();
-}
-
-$(document).ready(() => {
-  initBoard();
-  initAuthAndRating();
-  setupAudioUnlock();
-});
-
-// --- 5. GOOGLE AUTH & SKILL LEVEL (FIXED: NO AUTOMATIC POPUP BLOCK ON PAGE LOAD) ---
-function initAuthAndRating() {
-  // Check redirect login result first if popup was blocked
-  auth.getRedirectResult().then((result) => {
-    if (result && result.user) {
-      console.log("Logged in via redirect:", result.user.displayName);
-    }
-  }).catch((err) => {
-    console.warn("Redirect check:", err.message);
-  });
-
-  auth.onAuthStateChanged(async (user) => {
-    if (user) {
-      currentUserId = user.uid;
-      currentUserName = user.displayName || "Player";
-
-      document.getElementById("googleLoginBtn").style.display = "none";
-      document.getElementById("userProfile").style.display = "flex";
-      document.getElementById("userNameDisplay").innerText = currentUserName;
-      document.getElementById("playerName").innerText = currentUserName;
-
-      const userRef = database.ref("users/" + user.uid);
-      const snap = await userRef.once("value");
-      const data = snap.val();
-
-      if (!data || !data.rating) {
-        document.getElementById("skillModal").style.display = "flex";
-      } else {
-        currentUserRating = data.rating;
-        updateRatingDisplays();
-      }
-    } else {
-      currentUserId = null;
-      document.getElementById("googleLoginBtn").style.display = "flex";
-      document.getElementById("userProfile").style.display = "none";
-      // NOTE: Do NOT call triggerGoogleLogin() here automatically!
-      // Calling popup inside page load causes browsers to block popups.
-    }
-  });
-}
-
+// --- GOOGLE SIGN-IN (Popup Blocker Fix & Redirect Fallback) ---
 function triggerGoogleLogin() {
   const provider = new firebase.auth.GoogleAuthProvider();
-  // Using direct click-triggered popup with redirect fallback
-  auth.signInWithPopup(provider).catch((err) => {
-    console.warn("Popup error:", err.code, err.message);
-    if (err.code === "auth/popup-blocked") {
-      alert("Browser blocked the popup. Redirecting to Google Sign-In page...");
+  auth.signInWithPopup(provider).catch((error) => {
+    console.warn("Popup blocked or closed:", error.message);
+    if (error.code === 'auth/popup-blocked') {
       auth.signInWithRedirect(provider);
-    } else if (err.code !== "auth/popup-closed-by-user") {
-      alert("Sign-in error: " + err.message);
+    } else if (error.code !== 'auth/popup-closed-by-user') {
+      alert("Sign-in issue: " + error.message);
     }
   });
 }
+
+auth.getRedirectResult().catch(err => console.log(err));
+
+auth.onAuthStateChanged(async (user) => {
+  if (user) {
+    currentUserId = user.uid;
+    currentUserName = user.displayName || "Player";
+
+    const loginBtn = document.getElementById("googleLoginBtn");
+    const userProfile = document.getElementById("userProfile");
+    const nameDisplay = document.getElementById("userNameDisplay");
+    if (loginBtn) loginBtn.style.display = "none";
+    if (userProfile) userProfile.style.display = "inline-flex";
+    if (nameDisplay) nameDisplay.textContent = currentUserName;
+
+    const snap = await database.ref("users/" + user.uid).once("value");
+    const data = snap.val();
+
+    if (!data || !data.rating) {
+      const modal = document.getElementById("skillModal");
+      if (modal) modal.style.display = "flex";
+    } else {
+      currentUserRating = data.rating;
+      const ratingDisplay = document.getElementById("userRatingDisplay");
+      if (ratingDisplay) ratingDisplay.textContent = currentUserRating;
+    }
+  } else {
+    currentUserId = null;
+    const loginBtn = document.getElementById("googleLoginBtn");
+    const userProfile = document.getElementById("userProfile");
+    if (loginBtn) loginBtn.style.display = "inline-flex";
+    if (userProfile) userProfile.style.display = "none";
+  }
+});
 
 function handleLogout() {
   auth.signOut().then(() => window.location.reload());
@@ -212,226 +99,26 @@ function selectSkillLevel(level) {
       skillLevel: level
     }).then(() => {
       currentUserRating = initial;
-      document.getElementById("skillModal").style.display = "none";
-      updateRatingDisplays();
+      const ratingDisplay = document.getElementById("userRatingDisplay");
+      if (ratingDisplay) ratingDisplay.textContent = initial;
+      const modal = document.getElementById("skillModal");
+      if (modal) modal.style.display = "none";
     });
   }
 }
 
-function updateRatingDisplays() {
-  document.getElementById("userRatingDisplay").innerText = currentUserRating;
-  document.getElementById("playerRating").innerText = `(${currentUserRating})`;
-}
-
-function updateMatchRatings(winnerUid, loserUid) {
-  if (winnerUid) {
-    database.ref("users/" + winnerUid + "/rating").transaction(r => (r || 800) + 8);
-  }
-  if (loserUid) {
-    database.ref("users/" + loserUid + "/rating").transaction(r => Math.max(100, (r || 800) - 8));
-  }
-}
-
-// --- 6. WEBRTC VOICE CHAT WITH AUTOPLAY FIX ---
-function setupAudioUnlock() {
-  const unlock = () => {
-    const audio = document.getElementById("remoteAudio");
-    if (audio && audio.paused && audio.srcObject) {
-      audio.play().catch(e => console.log("Voice autoplay unlock:", e));
-    }
-  };
-  document.addEventListener("click", unlock, { once: true });
-}
-
-async function startVoiceChat(roomId, isCaller) {
-  try {
-    localVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    localVoiceStream.getAudioTracks().forEach(t => t.enabled = false);
-
-    document.getElementById("toggleMicBtn").disabled = false;
-    document.getElementById("voiceStatus").className = "voice-badge on";
-    document.getElementById("voiceStatus").innerText = "Connected";
-
-    peerConnection = new RTCPeerConnection(rtcConfig);
-
-    localVoiceStream.getTracks().forEach(track => {
-      peerConnection.addTrack(track, localVoiceStream);
-    });
-
-    peerConnection.ontrack = (event) => {
-      const audio = document.getElementById("remoteAudio");
-      if (audio && event.streams[0]) {
-        audio.srcObject = event.streams[0];
-        audio.play().catch(e => console.warn("Waiting user click to autoplay audio:", e));
-      }
-    };
-
-    const roomVoiceRef = database.ref("rooms/" + roomId + "/voice");
-
-    peerConnection.onicecandidate = (e) => {
-      if (e.candidate) {
-        const path = isCaller ? "callerCandidates" : "calleeCandidates";
-        roomVoiceRef.child(path).push(e.candidate.toJSON());
-      }
-    };
-
-    if (isCaller) {
-      const offer = await peerConnection.createOffer();
-      await peerConnection.setLocalDescription(offer);
-      await roomVoiceRef.child("offer").set({ sdp: offer.sdp, type: offer.type });
-
-      roomVoiceRef.child("answer").on("value", async (snap) => {
-        const answer = snap.val();
-        if (answer && !peerConnection.currentRemoteDescription) {
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-        }
-      });
-
-      roomVoiceRef.child("calleeCandidates").on("child_added", (snap) => {
-        const cand = snap.val();
-        if (cand) peerConnection.addIceCandidate(new RTCIceCandidate(cand));
-      });
-    } else {
-      roomVoiceRef.child("offer").once("value", async (snap) => {
-        const offer = snap.val();
-        if (offer) {
-          await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
-          await roomVoiceRef.child("answer").set({ sdp: answer.sdp, type: answer.type });
-        }
-      });
-
-      roomVoiceRef.child("callerCandidates").on("child_added", (snap) => {
-        const cand = snap.val();
-        if (cand) peerConnection.addIceCandidate(new RTCIceCandidate(cand));
-      });
-    }
-  } catch (err) {
-    console.warn("Microphone access denied or unsupported:", err);
-  }
-}
-
-function toggleMicrophone() {
-  if (!localVoiceStream) return;
-  isMicMuted = !isMicMuted;
-  localVoiceStream.getAudioTracks().forEach(t => t.enabled = !isMicMuted);
-
-  const btn = document.getElementById("toggleMicBtn");
-  if (isMicMuted) {
-    btn.innerText = "🎤 Unmute Mic";
-    btn.style.background = "#2563eb";
-  } else {
-    btn.innerText = "🔇 Mute Mic";
-    btn.style.background = "#ef4444";
-  }
-}
-
-// --- 7. CHESS ENGINE & MOVE HANDLERS ---
-function handleDragStart(source, piece, position, orientation) {
-  if (game.game_over()) return false;
-
-  if (currentMode === "friend" && currentRoomCode) {
-    if ((myColor === 'w' && piece.search(/^b/) !== -1) ||
-        (myColor === 'b' && piece.search(/^w/) !== -1)) {
-      return false;
-    }
-    if ((game.turn() === 'w' && myColor !== 'w') ||
-        (game.turn() === 'b' && myColor !== 'b')) {
-      return false;
-    }
-  }
-}
-
-function handleDrop(source, target) {
-  const isCapture = game.get(target) !== null;
-  const move = game.move({
-    from: source,
-    to: target,
-    promotion: 'q'
-  });
-
-  if (move === null) return 'snapback';
-
-  if (isCapture) playSound('capture');
-  else playSound('move');
-
-  if (game.in_check()) playSound('check');
-
-  if (currentMode === "friend" && currentRoomCode) {
-    database.ref("rooms/" + currentRoomCode + "/game").update({
-      fen: game.fen(),
-      lastMove: { from: source, to: target }
-    });
-  }
-
-  updateGameMeta();
-  recordMoveHistory(move);
-}
-
-function updateGameMeta() {
-  const turn = game.turn() === 'w' ? "White to move" : "Black to move";
-  document.getElementById("gameStatusText").innerText = turn;
-  updateCapturedPieces();
-}
-
-function recordMoveHistory(move) {
-  const list = document.getElementById("moveHistoryList");
-  const moveText = `${move.from}-${move.to} `;
-  list.innerText += moveText;
-}
-
-function updateCapturedPieces() {
-  const pieces = { p: 8, r: 2, n: 2, b: 2, q: 1 };
-  let whiteCaptured = "";
-  let blackCaptured = "";
-
-  const currentCounts = { w: {}, b: {} };
-  game.board().forEach(row => {
-    row.forEach(sq => {
-      if (sq) currentCounts[sq.color][sq.type] = (currentCounts[sq.color][sq.type] || 0) + 1;
-    });
-  });
-
-  ['p', 'n', 'b', 'r', 'q'].forEach(t => {
-    const missingW = (pieces[t] || 0) - (currentCounts.w[t] || 0);
-    const missingB = (pieces[t] || 0) - (currentCounts.b[t] || 0);
-    if (missingW > 0) blackCaptured += t.toUpperCase() + " ";
-    if (missingB > 0) whiteCaptured += t + " ";
-  });
-
-  document.getElementById("playerCaptured").innerText = whiteCaptured;
-  document.getElementById("opponentCaptured").innerText = blackCaptured;
-}
-
-// --- 8. MODE SWITCHER & MULTIPLAYER ROOMS ---
-function switchMode(mode) {
-  currentMode = mode;
-  document.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
-  if (mode === 'analysis') document.getElementById("modeAnalysisBtn").classList.add("active");
-  if (mode === 'ai') document.getElementById("modeVsBotBtn").classList.add("active");
-  if (mode === 'friend') document.getElementById("modeFriendBtn").classList.add("active");
-
-  const multiPanel = document.getElementById("multiplayerPanel");
-  const actionControls = document.getElementById("gameActionControls");
-  if (mode === 'friend') {
-    multiPanel.style.display = "block";
-    actionControls.style.display = "flex";
-  } else {
-    multiPanel.style.display = "none";
-    actionControls.style.display = "none";
-  }
-}
-
-function createRoom() {
+// --- MULTIPLAYER ROOM & GAME LOGIC ---
+function createFriendRoom() {
   if (!currentUserId) {
     alert("Please Sign in with Google first!");
     return triggerGoogleLogin();
   }
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   currentRoomCode = code;
-  myColor = 'w';
+  myOnlineColor = 'w';
   board.orientation('white');
+  game.reset();
+  board.start();
 
   database.ref("rooms/" + code).set({
     creatorId: currentUserId,
@@ -439,22 +126,23 @@ function createRoom() {
     creatorRating: currentUserRating,
     guestId: null,
     guestName: null,
-    game: { fen: 'start' },
+    gameFen: 'start',
     status: 'waiting'
   }).then(() => {
-    showRoomUI(code);
+    document.getElementById("activeRoomInfo").style.display = "flex";
+    document.getElementById("activeRoomCode").textContent = code;
     listenToRoom(code, true);
     startVoiceChat(code, true);
   });
 }
 
-function joinRoom() {
+function joinFriendRoom() {
   if (!currentUserId) {
     alert("Please Sign in with Google first!");
     return triggerGoogleLogin();
   }
-  const code = document.getElementById("roomCodeInput").value.trim();
-  if (!code) return alert("Please enter Room Code");
+  const code = document.getElementById("roomCodeInput").value.trim().toUpperCase();
+  if (!code) return alert("Enter Room Code");
 
   const roomRef = database.ref("rooms/" + code);
   roomRef.once("value", (snap) => {
@@ -462,7 +150,7 @@ function joinRoom() {
     if (!val) return alert("Invalid room code!");
 
     currentRoomCode = code;
-    myColor = 'b';
+    myOnlineColor = 'b';
     board.orientation('black');
 
     roomRef.update({
@@ -471,49 +159,43 @@ function joinRoom() {
       guestRating: currentUserRating,
       status: 'playing'
     }).then(() => {
-      showRoomUI(code);
+      document.getElementById("activeRoomInfo").style.display = "flex";
+      document.getElementById("activeRoomCode").textContent = code;
       listenToRoom(code, false);
       startVoiceChat(code, false);
     });
   });
 }
 
-function showRoomUI(code) {
-  document.getElementById("roomActiveBanner").style.display = "flex";
-  document.getElementById("activeRoomCodeDisplay").innerText = code;
-}
-
 function copyRoomCode() {
-  navigator.clipboard.writeText(currentRoomCode);
-  alert("Room code copied: " + currentRoomCode);
+  if (currentRoomCode) {
+    navigator.clipboard.writeText(currentRoomCode);
+    alert("Room Code copied: " + currentRoomCode);
+  }
 }
 
-function listenToRoom(roomId, isCreator) {
-  const roomRef = database.ref("rooms/" + roomId);
-
+function listenToRoom(code, isCreator) {
+  const roomRef = database.ref("rooms/" + code);
   roomRef.on("value", (snap) => {
     const val = snap.val();
     if (!val) return;
 
-    if (isCreator && val.guestName) {
-      document.getElementById("opponentName").innerText = val.guestName;
-      document.getElementById("opponentRating").innerText = `(${val.guestRating || 800})`;
-    } else if (!isCreator && val.creatorName) {
-      document.getElementById("opponentName").innerText = val.creatorName;
-      document.getElementById("opponentRating").innerText = `(${val.creatorRating || 800})`;
+    if (val.guestName) {
+      const oppLabel = isCreator ? val.guestName : val.creatorName;
+      const chatOpp = document.getElementById("chatOpponentName");
+      if (chatOpp) chatOpp.textContent = oppLabel + " (" + (isCreator ? val.guestRating : val.creatorRating) + ")";
     }
 
-    if (val.game && val.game.fen && val.game.fen !== game.fen()) {
-      if (val.game.fen === 'start') game.reset();
-      else game.load(val.game.fen);
+    if (val.gameFen && val.gameFen !== game.fen()) {
+      if (val.gameFen === 'start') game.reset();
+      else game.load(val.gameFen);
       board.position(game.fen());
       playSound('move');
-      updateGameMeta();
+      updateUI();
     }
 
     if (val.drawOffer && val.drawOffer !== currentUserId) {
-      const accept = confirm("Opponent offered a draw. Do you accept?");
-      if (accept) {
+      if (confirm("Opponent offered a draw. Accept?")) {
         roomRef.update({ gameOver: true, result: 'draw', drawOffer: null });
       } else {
         roomRef.child("drawOffer").remove();
@@ -526,15 +208,39 @@ function listenToRoom(roomId, isCreator) {
         alert(iWon ? "Opponent resigned! You won (+8 Rating)!" : "You resigned (-8 Rating).");
       } else if (val.result === 'draw') {
         alert("The game ended in a draw.");
+      } else if (val.result === 'checkmate') {
+        const iWon = val.winner === currentUserId;
+        alert(iWon ? "Checkmate! You won (+8 Rating)!" : "Checkmate! Opponent won (-8 Rating).");
       }
     }
   });
 
-  listenForChat(roomId);
+  listenForChat(code);
 }
 
-// --- 9. RESIGN & DRAW REQUESTS ---
-function resignCurrentGame() {
+function checkOnlineTrigger(move) {
+  if (currentMode === 'friend' && currentRoomCode) {
+    database.ref("rooms/" + currentRoomCode).update({
+      gameFen: game.fen(),
+      lastMove: { from: move.from, to: move.to }
+    });
+
+    if (game.in_checkmate()) {
+      const roomRef = database.ref("rooms/" + currentRoomCode);
+      roomRef.once("value", (snap) => {
+        const val = snap.val();
+        const opponentId = (val.creatorId === currentUserId) ? val.guestId : val.creatorId;
+        roomRef.update({ gameOver: true, result: 'checkmate', winner: currentUserId });
+        if (opponentId) {
+          database.ref("users/" + currentUserId + "/rating").transaction(r => (r || 800) + 8);
+          database.ref("users/" + opponentId + "/rating").transaction(r => Math.max(100, (r || 800) - 8));
+        }
+      });
+    }
+  }
+}
+
+function resignGame() {
   if (!currentRoomCode) return alert("Not in an active match!");
   if (!confirm("Are you sure you want to resign? (-8 Rating)")) return;
 
@@ -549,7 +255,8 @@ function resignCurrentGame() {
       winner: opponentId,
       loser: currentUserId
     });
-    updateMatchRatings(opponentId, currentUserId);
+    if (opponentId) database.ref("users/" + opponentId + "/rating").transaction(r => (r || 800) + 8);
+    database.ref("users/" + currentUserId + "/rating").transaction(r => Math.max(100, (r || 800) - 8));
   });
 }
 
@@ -559,7 +266,7 @@ function offerDrawGame() {
   alert("Draw offer sent to opponent.");
 }
 
-// --- 10. LIVE IN-GAME CHAT ---
+// --- LIVE CHAT ---
 function handleSendChat(e) {
   e.preventDefault();
   const input = document.getElementById("chatInput");
@@ -575,39 +282,1415 @@ function handleSendChat(e) {
   input.value = "";
 }
 
-function listenForChat(roomId) {
-  const container = document.getElementById("chatMessages");
-  container.innerHTML = "";
+function listenForChat(code) {
+  const box = document.getElementById("chatMessages");
+  if (!box) return;
+  box.innerHTML = "";
 
-  database.ref("rooms/" + roomId + "/chat").limitToLast(50).on("child_added", (snap) => {
+  database.ref("rooms/" + code + "/chat").limitToLast(40).on("child_added", (snap) => {
     const msg = snap.val();
     const isMe = msg.senderId === currentUserId;
-
     const bubble = document.createElement("div");
     bubble.className = `chat-bubble ${isMe ? 'mine' : 'theirs'}`;
-    bubble.innerHTML = `<span class="chat-author">${escapeHtml(msg.sender)}</span>${escapeHtml(msg.text)}`;
-
-    container.appendChild(bubble);
-    container.scrollTop = container.scrollHeight;
+    bubble.innerHTML = `<span class="chat-bubble-author">${escapeHtml(msg.sender)}</span><span class="chat-bubble-text">${escapeHtml(msg.text)}</span>`;
+    box.appendChild(bubble);
+    box.scrollTop = box.scrollHeight;
   });
 }
 
 function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.innerText = str;
-  return div.innerHTML;
+  const d = document.createElement("div");
+  d.innerText = str;
+  return d.innerHTML;
 }
 
-function switchSidebarTab(tab) {
-  if (tab === 'analysis') {
-    document.getElementById("tabAnalysis").classList.add("active");
-    document.getElementById("tabReview").classList.remove("active");
-    document.getElementById("tabContentAnalysis").style.display = "block";
-    document.getElementById("tabContentReview").style.display = "none";
-  } else {
-    document.getElementById("tabReview").classList.add("active");
-    document.getElementById("tabAnalysis").classList.remove("active");
-    document.getElementById("tabContentReview").style.display = "block";
-    document.getElementById("tabContentAnalysis").style.display = "none";
+// --- WEBRTC LIVE VOICE CHAT ---
+async function startVoiceChat(roomId, isCaller) {
+  try {
+    localVoiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    localVoiceStream.getAudioTracks().forEach(t => t.enabled = false);
+
+    const btn = document.getElementById("toggleMicBtn");
+    if (btn) btn.disabled = false;
+
+    peerConnection = new RTCPeerConnection(rtcConfig);
+    localVoiceStream.getTracks().forEach(track => peerConnection.addTrack(track, localVoiceStream));
+
+    peerConnection.ontrack = (event) => {
+      const audio = document.getElementById("remoteAudio");
+      if (audio && event.streams[0]) {
+        audio.srcObject = event.streams[0];
+        audio.play().catch(e => console.log("Voice audio autoplay standby:", e));
+      }
+    };
+
+    const voiceRef = database.ref("rooms/" + roomId + "/voice");
+    peerConnection.onicecandidate = (e) => {
+      if (e.candidate) {
+        const path = isCaller ? "callerCandidates" : "calleeCandidates";
+        voiceRef.child(path).push(e.candidate.toJSON());
+      }
+    };
+
+    if (isCaller) {
+      const offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
+      await voiceRef.child("offer").set({ sdp: offer.sdp, type: offer.type });
+      voiceRef.child("answer").on("value", async snap => {
+        const ans = snap.val();
+        if (ans && !peerConnection.currentRemoteDescription) {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(ans));
+        }
+      });
+      voiceRef.child("calleeCandidates").on("child_added", snap => {
+        const c = snap.val();
+        if (c) peerConnection.addIceCandidate(new RTCIceCandidate(c));
+      });
+    } else {
+      voiceRef.child("offer").once("value", async snap => {
+        const off = snap.val();
+        if (off) {
+          await peerConnection.setRemoteDescription(new RTCSessionDescription(off));
+          const ans = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(ans);
+          await voiceRef.child("answer").set({ sdp: ans.sdp, type: ans.type });
+        }
+      });
+      voiceRef.child("callerCandidates").on("child_added", snap => {
+        const c = snap.val();
+        if (c) peerConnection.addIceCandidate(new RTCIceCandidate(c));
+      });
+    }
+  } catch (err) {
+    console.warn("Microphone not available:", err);
   }
 }
+
+function toggleMicrophone() {
+  if (!localVoiceStream) return;
+  isMicMuted = !isMicMuted;
+  localVoiceStream.getAudioTracks().forEach(t => t.enabled = !isMicMuted);
+
+  const btn = document.getElementById("toggleMicBtn");
+  if (btn) {
+    btn.textContent = isMicMuted ? "🎤 Unmute" : "🔇 Mute";
+    btn.classList.toggle("active-pill", !isMicMuted);
+  }
+}
+
+
+// B Chess Analyzer — Stockfish Engine + Audio FX + Real-time Blunder Engine + Captured Pieces + Copy Report
+
+let board = null;
+const game = new Chess();
+let redoStack = [];
+let stockfish = null;
+let engineReady = false;
+let currentBestMoveUci = null;
+let showBestMoveArrow = true;
+let targetDepth = 15;
+let soundEnabled = true;
+
+// Click-to-Move / Tap state
+let selectedSquare = null;
+let dragActive = false;
+let lastDropTime = 0;
+
+// Game Mode State: 'analysis' or 'bot'
+let currentMode = 'analysis';
+let playerColor = 'w';
+let botRating = 1400;
+let isBotThinking = false;
+
+// Audio Synthesizer (Realistic Wooden Acoustic Multi-layered Audio)
+let audioCtx = null;
+
+function getAudioContext() {
+  if (!audioCtx) {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (AudioContext) {
+      audioCtx = new AudioContext();
+    }
+  }
+  if (audioCtx && audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+function playSound(type) {
+  if (!soundEnabled) return;
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    if (type === 'move') {
+      // Realistic wooden board tap: dual resonant body + contact click
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      const gain2 = ctx.createGain();
+
+      osc1.type = 'triangle';
+      osc1.frequency.setValueAtTime(320, now);
+      osc1.frequency.exponentialRampToValueAtTime(65, now + 0.07);
+
+      gain1.gain.setValueAtTime(0.75, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(140, now);
+      osc2.frequency.exponentialRampToValueAtTime(45, now + 0.09);
+
+      gain2.gain.setValueAtTime(0.5, now);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+
+      osc1.connect(gain1);
+      osc2.connect(gain2);
+      gain1.connect(ctx.destination);
+      gain2.connect(ctx.destination);
+
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + 0.075);
+      osc2.stop(now + 0.095);
+
+    } else if (type === 'capture') {
+      // Sharp wooden piece clash with impact crack
+      const osc = ctx.createOscillator();
+      const noise = ctx.createBufferSource();
+      const buffer = ctx.createBuffer(1, ctx.sampleRate * 0.06, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < buffer.length; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.015));
+      }
+      noise.buffer = buffer;
+
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.65, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.01, now + 0.06);
+
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(480, now);
+      osc.frequency.exponentialRampToValueAtTime(110, now + 0.1);
+
+      const oscGain = ctx.createGain();
+      oscGain.gain.setValueAtTime(0.6, now);
+      oscGain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+
+      noise.connect(noiseGain);
+      osc.connect(oscGain);
+      noiseGain.connect(ctx.destination);
+      oscGain.connect(ctx.destination);
+
+      noise.start(now);
+      osc.start(now);
+      osc.stop(now + 0.1);
+
+    } else if (type === 'check') {
+      // Clear alert chime (Bell-like tension tone)
+      [659.25, 880].forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + idx * 0.07);
+
+        gain.gain.setValueAtTime(0.45, now + idx * 0.07);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.07 + 0.22);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + idx * 0.07);
+        osc.stop(now + idx * 0.07 + 0.23);
+      });
+
+    } else if (type === 'checkmate') {
+      // Triumphant orchestral brass-like victory chord
+      const freqs = [392.00, 493.88, 587.33, 783.99, 987.77];
+      freqs.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now + idx * 0.1);
+
+        gain.gain.setValueAtTime(0.5, now + idx * 0.1);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.1 + 0.8);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + idx * 0.1);
+        osc.stop(now + idx * 0.1 + 0.85);
+      });
+    }
+  } catch (e) {
+    console.warn('Audio playback error:', e);
+  }
+}
+
+// Move Quality & Real-Time Blunder Analysis Engine
+// Each move stores { san, color, evalBefore, evalAfter, quality, loss }
+let moveQualityHistory = [];
+let pendingEvalMoveIndex = null;
+let currentPositionCp = 0; // Perspective: White (e.g. +120 = +1.20 pawns for White)
+
+// Bot profiles
+const BOT_PROFILES = {
+  800:  { skill: 0,  depth: 1,  moveTime: 300, blunderRate: 0.35 },
+  1100: { skill: 3,  depth: 2,  moveTime: 400, blunderRate: 0.18 },
+  1400: { skill: 6,  depth: 4,  moveTime: 500, blunderRate: 0.06 },
+  1700: { skill: 10, depth: 7,  moveTime: 650, blunderRate: 0.01 },
+  2000: { skill: 15, depth: 10, moveTime: 800, blunderRate: 0.00 },
+  2500: { skill: 20, depth: 14, moveTime: 1000, blunderRate: 0.00 }
+};
+
+// Rich Opening & Gambit Dictionary
+const OPENINGS_LIST = [
+  { moves: ["e4", "e5", "f4"], name: "King's Gambit" },
+  { moves: ["e4", "e5", "f4", "exf4"], name: "King's Gambit Accepted" },
+  { moves: ["e4", "e5", "f4", "d5"], name: "Falkbeer Counter-Gambit" },
+  { moves: ["d4", "d5", "c4"], name: "Queen's Gambit" },
+  { moves: ["d4", "d5", "c4", "dxc4"], name: "Queen's Gambit Accepted (QGA)" },
+  { moves: ["d4", "d5", "c4", "c6"], name: "Slav Defense" },
+  { moves: ["d4", "d5", "c4", "e6"], name: "Queen's Gambit Declined (QGD)" },
+  { moves: ["e4", "e5", "Nf3", "Nc6", "d4", "exd4", "Bc4"], name: "Scotch Gambit" },
+  { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "b4"], name: "Evans Gambit" },
+  { moves: ["e4", "e5", "d4", "exd4", "c3"], name: "Danish Gambit" },
+  { moves: ["e4", "e5", "Nf3", "d5"], name: "Elephant Gambit" },
+  { moves: ["e4", "e5", "Nf3", "f5"], name: "Latvian Gambit" },
+  { moves: ["d4", "Nf6", "c4", "e5"], name: "Budapest Gambit" },
+  { moves: ["d4", "f5", "e4"], name: "Staunton Gambit" },
+  { moves: ["d4", "c5", "d5", "b5"], name: "Benko Gambit" },
+  { moves: ["e4", "c5", "b4"], name: "Sicilian Wing Gambit" },
+  { moves: ["e4", "c5", "d4", "cxd4", "c3"], name: "Smith-Morra Gambit" },
+  { moves: ["d4", "d5", "e4"], name: "Blackmar-Diemer Gambit" },
+  { moves: ["e4", "e6", "d4", "d5", "c4"], name: "Diemer-Duhm Gambit" },
+  { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6", "Ng5", "d5", "exd5", "Na5"], name: "Two Knights Defense" },
+  { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6", "d4"], name: "Two Knights: Modern Bishop's Opening" },
+  { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"], name: "Giuoco Piano (Italian Game)" },
+  { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4"], name: "Italian Game" },
+  { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"], name: "Ruy Lopez: Morphy Defense" },
+  { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5"], name: "Ruy Lopez (Spanish Opening)" },
+  { moves: ["e4", "e5", "Nf3", "Nc6", "d4"], name: "Scotch Game" },
+  { moves: ["e4", "e5", "Nf3", "Nf6"], name: "Petrov's Defense (Russian Game)" },
+  { moves: ["e4", "e5", "Nf3", "d6"], name: "Philidor Defense" },
+  { moves: ["e4", "e5", "Nc3"], name: "Vienna Game" },
+  { moves: ["e4", "e5", "Bc4"], name: "Bishop's Opening" },
+  { moves: ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6"], name: "Sicilian Defense: Najdorf Variation" },
+  { moves: ["e4", "c5", "Nf3", "Nc6", "d4", "cxd4", "Nxd4", "g6"], name: "Sicilian Defense: Accelerated Dragon" },
+  { moves: ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "g6"], name: "Sicilian Defense: Dragon Variation" },
+  { moves: ["e4", "c5", "c3"], name: "Sicilian Defense: Alapin Variation" },
+  { moves: ["e4", "c5", "Nc3"], name: "Closed Sicilian" },
+  { moves: ["e4", "c5"], name: "Sicilian Defense" },
+  { moves: ["e4", "e6", "d4", "d5"], name: "French Defense" },
+  { moves: ["e4", "e6"], name: "French Defense" },
+  { moves: ["e4", "c6", "d4", "d5"], name: "Caro-Kann Defense" },
+  { moves: ["e4", "c6"], name: "Caro-Kann Defense" },
+  { moves: ["e4", "d6", "d4", "Nf6"], name: "Pirc Defense" },
+  { moves: ["e4", "Nf6"], name: "Alekhine's Defense" },
+  { moves: ["e4", "d5"], name: "Scandinavian Defense (Center Counter)" },
+  { moves: ["e4", "g6"], name: "Modern Defense" },
+  { moves: ["d4", "Nf6", "c4", "g6", "Nc3", "Bg7"], name: "King's Indian Defense (KID)" },
+  { moves: ["d4", "Nf6", "c4", "e6", "Nc3", "Bb4"], name: "Nimzo-Indian Defense" },
+  { moves: ["d4", "Nf6", "c4", "e6", "Nf3", "b6"], name: "Queen's Indian Defense" },
+  { moves: ["d4", "Nf6", "c4", "c5"], name: "Benoni Defense" },
+  { moves: ["d4", "f5"], name: "Dutch Defense" },
+  { moves: ["d4", "d5", "Bf4"], name: "London System" },
+  { moves: ["d4", "Nf6", "Bf4"], name: "London System" },
+  { moves: ["c4"], name: "English Opening" },
+  { moves: ["Nf3"], name: "Réti Opening" },
+  { moves: ["b3"], name: "Nimzo-Larsen Attack" },
+  { moves: ["f4"], name: "Bird's Opening" },
+  { moves: ["e4", "e5"], name: "Open Game (1. e4 e5)" },
+  { moves: ["e4"], name: "King's Pawn Opening (1. e4)" },
+  { moves: ["d4"], name: "Queen's Pawn Opening (1. d4)" }
+];
+
+function detectOpening() {
+  const history = game.history();
+  if (history.length === 0) return "Starting Position";
+
+  let matchedOpening = null;
+  let maxMatchedLen = 0;
+
+  for (const item of OPENINGS_LIST) {
+    if (item.moves.length <= history.length) {
+      let match = true;
+      for (let i = 0; i < item.moves.length; i++) {
+        if (history[i] !== item.moves[i]) {
+          match = false;
+          break;
+        }
+      }
+      if (match && item.moves.length > maxMatchedLen) {
+        maxMatchedLen = item.moves.length;
+        matchedOpening = item.name;
+      }
+    }
+  }
+
+  return matchedOpening || "Unorthodox / Custom Variation";
+}
+
+// 1. Initialize Stockfish Engine
+async function initStockfish() {
+  const urls = [
+    'https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js',
+    'https://cdn.jsdelivr.net/npm/stockfish.js@10.0.2/stockfish.js'
+  ];
+
+  for (const url of urls) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) continue;
+      const scriptText = await response.text();
+      const blob = new Blob([scriptText], { type: 'application/javascript' });
+      stockfish = new Worker(URL.createObjectURL(blob));
+      setupStockfishListeners();
+      stockfish.postMessage('uci');
+      return;
+    } catch (e) {
+      console.warn('Trying next Stockfish CDN...', e);
+    }
+  }
+
+  document.getElementById('engineBadge').textContent = 'Offline Mode';
+  document.getElementById('engineSubtext').textContent = 'Could not load remote Stockfish worker.';
+}
+
+function setupStockfishListeners() {
+  stockfish.onmessage = function(event) {
+    const line = typeof event.data === 'string' ? event.data : '';
+    if (!line) return;
+
+    if (line === 'uciok') {
+      engineReady = true;
+      document.getElementById('engineBadge').textContent = 'Stockfish 10 Ready';
+      if (currentMode === 'analysis') {
+        analyzePosition();
+      }
+    }
+
+    if (line.startsWith('info depth')) {
+      const depthMatch = line.match(/depth (\d+)/);
+      const scoreMatch = line.match(/score cp (-?\d+)/);
+      const mateMatch = line.match(/score mate (-?\d+)/);
+      const pvMatch = line.match(/ pv ([a-h1-8qrbn\s]+)/);
+
+      if (depthMatch) {
+        document.getElementById('depthVal').textContent = `${depthMatch[1]} / ${targetDepth}`;
+      }
+
+      if (pvMatch) {
+        const pvMoves = pvMatch[1].trim().split(/\s+/);
+        const topUci = pvMoves[0];
+        if (topUci && topUci.length >= 4) {
+          currentBestMoveUci = topUci;
+          if (currentMode === 'analysis') {
+            updateBestMoveDisplay(topUci);
+            drawBestMoveArrow(topUci);
+          }
+        }
+        document.getElementById('pvLineText').textContent = `Engine Line: ${pvMoves.slice(0, 5).join(' → ')}`;
+      }
+
+      const turnMultiplier = game.turn() === 'w' ? 1 : -1;
+      let newScoreCp = 0;
+
+      if (mateMatch) {
+        const mateRaw = parseInt(mateMatch[1], 10) * turnMultiplier;
+        const mateText = `M${Math.abs(mateRaw)}`;
+        document.getElementById('evalScore').textContent = mateRaw > 0 ? `+${mateText}` : `-${mateText}`;
+        updateEvalBar(mateRaw > 0 ? 10 : -10, mateText);
+        newScoreCp = mateRaw > 0 ? 1500 : -1500;
+      } else if (scoreMatch) {
+        const cpWhite = (parseInt(scoreMatch[1], 10) * turnMultiplier) / 100;
+        newScoreCp = parseInt(scoreMatch[1], 10) * turnMultiplier;
+        const sign = cpWhite > 0 ? '+' : '';
+        const formatted = `${sign}${cpWhite.toFixed(2)}`;
+        document.getElementById('evalScore').textContent = formatted;
+        updateEvalBar(cpWhite, `${sign}${cpWhite.toFixed(1)}`);
+      }
+
+      currentPositionCp = newScoreCp;
+
+      // RESOLVE MOVE QUALITY UPON RECEIVING REAL EVALUATION FROM ENGINE:
+      if (pendingEvalMoveIndex !== null && moveQualityHistory[pendingEvalMoveIndex]) {
+        resolveMoveQuality(pendingEvalMoveIndex, newScoreCp);
+        pendingEvalMoveIndex = null;
+      }
+    }
+
+    if (line.startsWith('bestmove')) {
+      const parts = line.split(' ');
+      const bestUci = parts[1];
+
+      if (currentMode === 'bot' && isBotThinking) {
+        isBotThinking = false;
+        executeBotMove(bestUci);
+        return;
+      }
+
+      if (bestUci && bestUci !== '(none)') {
+        currentBestMoveUci = bestUci;
+        if (currentMode === 'analysis') {
+          updateBestMoveDisplay(bestUci);
+          drawBestMoveArrow(bestUci);
+        }
+      }
+    }
+  };
+}
+
+// Correct Centipawn Difference Calculation for Real Blunders & Mistakes
+function resolveMoveQuality(index, evalAfter) {
+  const item = moveQualityHistory[index];
+  if (!item) return;
+
+  item.evalAfter = evalAfter;
+  const evalBefore = item.evalBefore;
+
+  // For White: If eval dropped, loss = evalBefore - evalAfter
+  // For Black: If eval increased in White's favor, loss = evalAfter - evalBefore
+  let diff = 0;
+  if (item.color === 'w') {
+    diff = evalBefore - evalAfter;
+  } else {
+    diff = evalAfter - evalBefore;
+  }
+
+  let quality = 'good';
+  if (diff >= 200) {
+    quality = 'blunder';       // ?? Loss >= 2 pawns
+  } else if (diff >= 90) {
+    quality = 'mistake';       // ? Loss >= 0.9 pawns
+  } else if (diff >= 40) {
+    quality = 'inaccuracy';    // ?! Loss >= 0.4 pawns
+  } else if (diff <= 15) {
+    quality = 'best';          // ★ Optimal move / minimal drop
+  } else {
+    quality = 'good';          // ✓ Standard playable move
+  }
+
+  item.quality = quality;
+  item.loss = Math.max(0, diff);
+
+  updateGameReview();
+  renderMoveHistoryBadges();
+}
+
+function updateBestMoveDisplay(uci) {
+  if (!uci || uci.length < 4) return;
+  const from = uci.slice(0, 2);
+  const to = uci.slice(2, 4);
+  const promotion = uci.length > 4 ? uci[4] : 'q';
+
+  const tempGame = new Chess(game.fen());
+  const moveObj = tempGame.move({ from, to, promotion });
+  const sanText = moveObj ? moveObj.san : `${from}→${to}`;
+
+  document.getElementById('bestMoveText').textContent = `${sanText} (${from.toUpperCase()} → ${to.toUpperCase()})`;
+  document.getElementById('engineSubtext').textContent = `Move piece from ${from.toUpperCase()} to ${to.toUpperCase()}`;
+}
+
+function updateEvalBar(cpWhite, displayScore) {
+  const clamped = Math.max(-10, Math.min(10, cpWhite));
+  const whitePercent = 50 + (clamped / 10) * 46;
+
+  document.getElementById('evalBarWhite').style.height = `${whitePercent}%`;
+  document.getElementById('evalBarText').textContent = displayScore;
+
+  const wProb = Math.round(whitePercent);
+  const bProb = 100 - wProb;
+  document.getElementById('whiteProbBar').style.width = `${wProb}%`;
+  document.getElementById('whiteProbBar').textContent = `White ${wProb}%`;
+  document.getElementById('blackProbBar').style.width = `${bProb}%`;
+  document.getElementById('blackProbBar').textContent = `Black ${bProb}%`;
+
+  const explainEl = document.getElementById('evalExplainText');
+  if (cpWhite > 1.5) explainEl.textContent = 'White has a winning advantage.';
+  else if (cpWhite > 0.4) explainEl.textContent = 'White is slightly better.';
+  else if (cpWhite < -1.5) explainEl.textContent = 'Black has a winning advantage.';
+  else if (cpWhite < -0.4) explainEl.textContent = 'Black is slightly better.';
+  else explainEl.textContent = 'Position is balanced.';
+}
+
+function drawBestMoveArrow(uci) {
+  clearHighlights();
+  const arrowEl = document.getElementById('bestMoveArrow');
+
+  if (!showBestMoveArrow || currentMode === 'bot' || !uci || uci.length < 4 || game.game_over()) {
+    arrowEl.setAttribute('visibility', 'hidden');
+    return;
+  }
+
+  const from = uci.slice(0, 2);
+  const to = uci.slice(2, 4);
+
+  $(`#myBoard .square-${from}`).addClass('highlight-from');
+  $(`#myBoard .square-${to}`).addClass('highlight-to');
+
+  const coordsFrom = squareToSvgCoords(from);
+  const coordsTo = squareToSvgCoords(to);
+
+  arrowEl.setAttribute('x1', coordsFrom.x);
+  arrowEl.setAttribute('y1', coordsFrom.y);
+  arrowEl.setAttribute('x2', coordsTo.x);
+  arrowEl.setAttribute('y2', coordsTo.y);
+  arrowEl.setAttribute('visibility', 'visible');
+}
+
+function squareToSvgCoords(square) {
+  const file = square.charCodeAt(0) - 97;
+  const rank = parseInt(square[1], 10) - 1;
+  const orientation = board.orientation();
+
+  let col, row;
+  if (orientation === 'white') {
+    col = file;
+    row = 7 - rank;
+  } else {
+    col = 7 - file;
+    row = rank;
+  }
+
+  return {
+    x: col * 12.5 + 6.25,
+    y: row * 12.5 + 6.25
+  };
+}
+
+function clearHighlights() {
+  $('#myBoard .square-55d63').removeClass('highlight-from highlight-to');
+}
+
+function clearClickHighlights() {
+  $('#myBoard .square-55d63').removeClass('square-selected legal-dest-dot legal-dest-capture');
+}
+
+function showLegalDestinations(sourceSquare) {
+  clearClickHighlights();
+  $(`#myBoard .square-${sourceSquare}`).addClass('square-selected');
+
+  const legalMoves = game.moves({ square: sourceSquare, verbose: true });
+  for (const m of legalMoves) {
+    const $target = $(`#myBoard .square-${m.to}`);
+    if (m.captured || game.get(m.to)) {
+      $target.addClass('legal-dest-capture');
+    } else {
+      $target.addClass('legal-dest-dot');
+    }
+  }
+}
+
+function analyzePosition() {
+  if (!stockfish || !engineReady) return;
+  if (game.game_over()) {
+    document.getElementById('bestMoveText').textContent = 'Game Over';
+    document.getElementById('bestMoveArrow').setAttribute('visibility', 'hidden');
+    return;
+  }
+
+  document.getElementById('bestMoveText').textContent = 'Analyzing...';
+  stockfish.postMessage('stop');
+  stockfish.postMessage('setoption name Skill Level value 20');
+  stockfish.postMessage('position fen ' + game.fen());
+  stockfish.postMessage('go depth ' + targetDepth);
+}
+
+function requestBotMove() {
+  if (game.game_over() || !stockfish || !engineReady) return;
+  isBotThinking = true;
+
+  document.getElementById('bestMoveText').textContent = `Bot (${botRating}) is thinking...`;
+  document.getElementById('engineSubtext').textContent = 'Calculating response...';
+  document.getElementById('pvLineText').textContent = 'Bot turn in progress...';
+  document.getElementById('bestMoveArrow').setAttribute('visibility', 'hidden');
+
+  const profile = BOT_PROFILES[botRating] || BOT_PROFILES[1400];
+
+  if (Math.random() < profile.blunderRate) {
+    const legalMoves = game.moves({ verbose: true });
+    if (legalMoves.length > 0) {
+      const randomMove = legalMoves[Math.floor(Math.random() * legalMoves.length)];
+      setTimeout(() => {
+        if (!isBotThinking) return;
+        isBotThinking = false;
+        const uciMove = randomMove.from + randomMove.to + (randomMove.promotion || '');
+        executeBotMove(uciMove);
+      }, profile.moveTime);
+      return;
+    }
+  }
+
+  stockfish.postMessage('stop');
+  stockfish.postMessage(`setoption name Skill Level value ${profile.skill}`);
+  stockfish.postMessage('position fen ' + game.fen());
+  stockfish.postMessage(`go depth ${profile.depth} movetime ${profile.moveTime}`);
+}
+
+function executeBotMove(uci) {
+  if (!uci || uci === '(none)') {
+    isBotThinking = false;
+    return;
+  }
+
+  const from = uci.slice(0, 2);
+  const to = uci.slice(2, 4);
+  const promotion = uci.length > 4 ? uci[4] : 'q';
+
+  const beforeEval = currentPositionCp;
+  const move = game.move({ from, to, promotion });
+  if (move) {
+    redoStack = [];
+    board.position(game.fen());
+    recordMoveQuality(move, beforeEval);
+    handleMoveEffects(move);
+    updateUI();
+  }
+}
+
+// Drag & Drop Handlers
+function onDragStart(source, piece) {
+  if (game.game_over()) return false;
+  if (isBotThinking) return false;
+
+  if ((game.turn() === 'w' && piece.search(/^b/) !== -1) ||
+      (game.turn() === 'b' && piece.search(/^w/) !== -1)) {
+    return false;
+  }
+
+  if (currentMode === 'bot' && game.turn() !== playerColor) {
+    return false;
+  }
+  if (currentMode === 'friend' && currentRoomCode) {
+    if (game.turn() !== myOnlineColor) return false;
+    if ((myOnlineColor === 'w' && piece.search(/^b/) !== -1) ||
+        (myOnlineColor === 'b' && piece.search(/^w/) !== -1)) {
+      return false;
+    }
+  }
+
+  dragActive = true;
+  showLegalDestinations(source);
+}
+
+function onDrop(source, target) {
+  dragActive = false;
+  lastDropTime = Date.now();
+
+  if (source === target) {
+    if (selectedSquare === source) {
+      clearClickHighlights();
+      selectedSquare = null;
+    } else {
+      selectedSquare = source;
+      showLegalDestinations(source);
+    }
+    return 'snapback';
+  }
+
+  clearClickHighlights();
+  selectedSquare = null;
+
+  const beforeEval = currentPositionCp;
+  const move = game.move({
+    from: source,
+    to: target,
+    promotion: 'q'
+  });
+
+  if (move === null) return 'snapback';
+
+  redoStack = [];
+  recordMoveQuality(move, beforeEval);
+  handleMoveEffects(move);
+  updateUI();
+  checkBotTrigger();
+  checkOnlineTrigger(move);
+}
+
+function onSnapEnd() {
+  board.position(game.fen());
+}
+
+// Universal Click & Touch handler for mobile & desktop
+function handleSquareClick(square) {
+  if (game.game_over() || isBotThinking) return;
+
+  if (selectedSquare) {
+    const clickedPiece = game.get(square);
+    if (clickedPiece && clickedPiece.color === game.turn() &&
+        (currentMode !== 'bot' || clickedPiece.color === playerColor)) {
+      if (selectedSquare === square) {
+        clearClickHighlights();
+        selectedSquare = null;
+        return;
+      }
+      selectedSquare = square;
+      showLegalDestinations(square);
+      return;
+    }
+
+    const beforeEval = currentPositionCp;
+    const move = game.move({
+      from: selectedSquare,
+      to: square,
+      promotion: 'q'
+    });
+
+    clearClickHighlights();
+    selectedSquare = null;
+
+    if (move) {
+      redoStack = [];
+      board.position(game.fen());
+      recordMoveQuality(move, beforeEval);
+      handleMoveEffects(move);
+      updateUI();
+      checkBotTrigger();
+      checkOnlineTrigger(move);
+      return;
+    }
+  }
+
+  const piece = game.get(square);
+  if (!piece) return;
+
+  if (piece.color !== game.turn()) return;
+  if (currentMode === 'bot' && piece.color !== playerColor) return;
+  if (currentMode === 'friend' && currentRoomCode && piece.color !== myOnlineColor) return;
+
+  selectedSquare = square;
+  showLegalDestinations(square);
+}
+
+function recordMoveQuality(move, beforeEval) {
+  const newIndex = moveQualityHistory.length;
+  moveQualityHistory.push({
+    san: move.san,
+    color: move.color,
+    evalBefore: beforeEval,
+    evalAfter: beforeEval,
+    quality: '...', // Pending evaluation from Stockfish
+    loss: 0
+  });
+  pendingEvalMoveIndex = newIndex;
+}
+
+function handleMoveEffects(move) {
+  if (game.in_checkmate()) {
+    playSound('checkmate');
+  } else if (game.in_check()) {
+    playSound('check');
+  } else if (move.captured) {
+    playSound('capture');
+  } else {
+    playSound('move');
+  }
+}
+
+// Captured Pieces Tracking & Material Score Calculation
+const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+const PIECE_IMAGES = {
+  w: {
+    p: 'https://chessboardjs.com/img/chesspieces/wikipedia/wP.png',
+    n: 'https://chessboardjs.com/img/chesspieces/wikipedia/wN.png',
+    b: 'https://chessboardjs.com/img/chesspieces/wikipedia/wB.png',
+    r: 'https://chessboardjs.com/img/chesspieces/wikipedia/wR.png',
+    q: 'https://chessboardjs.com/img/chesspieces/wikipedia/wQ.png'
+  },
+  b: {
+    p: 'https://chessboardjs.com/img/chesspieces/wikipedia/bP.png',
+    n: 'https://chessboardjs.com/img/chesspieces/wikipedia/bN.png',
+    b: 'https://chessboardjs.com/img/chesspieces/wikipedia/bB.png',
+    r: 'https://chessboardjs.com/img/chesspieces/wikipedia/bR.png',
+    q: 'https://chessboardjs.com/img/chesspieces/wikipedia/bQ.png'
+  }
+};
+
+function updateCapturedPiecesDisplay() {
+  const startingCounts = {
+    w: { p: 8, n: 2, b: 2, r: 2, q: 1 },
+    b: { p: 8, n: 2, b: 2, r: 2, q: 1 }
+  };
+
+  const currentBoard = game.board();
+  const currentCounts = {
+    w: { p: 0, n: 0, b: 0, r: 0, q: 0 },
+    b: { p: 0, n: 0, b: 0, r: 0, q: 0 }
+  };
+
+  let whiteMaterial = 0;
+  let blackMaterial = 0;
+
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const piece = currentBoard[r][c];
+      if (piece && piece.type !== 'k') {
+        currentCounts[piece.color][piece.type]++;
+        if (piece.color === 'w') whiteMaterial += PIECE_VALUES[piece.type];
+        else blackMaterial += PIECE_VALUES[piece.type];
+      }
+    }
+  }
+
+  // Pieces captured from Black (captured by White):
+  const capturedFromBlack = [];
+  ['q', 'r', 'b', 'n', 'p'].forEach(type => {
+    const diff = startingCounts.b[type] - currentCounts.b[type];
+    for (let i = 0; i < diff; i++) {
+      capturedFromBlack.push({ color: 'b', type: type });
+    }
+  });
+
+  // Pieces captured from White (captured by Black):
+  const capturedFromWhite = [];
+  ['q', 'r', 'b', 'n', 'p'].forEach(type => {
+    const diff = startingCounts.w[type] - currentCounts.w[type];
+    for (let i = 0; i < diff; i++) {
+      capturedFromWhite.push({ color: 'w', type: type });
+    }
+  });
+
+  const diffMaterial = whiteMaterial - blackMaterial;
+  const isFlipped = board && board.orientation() === 'black';
+
+  // If flipped, top is White, bottom is Black
+  const topList = isFlipped ? capturedFromBlack : capturedFromWhite;
+  const bottomList = isFlipped ? capturedFromWhite : capturedFromBlack;
+
+  const topName = isFlipped ? 'White' : 'Black';
+  const bottomName = isFlipped ? 'Black' : 'White';
+
+  document.getElementById('topPlayerName').textContent = topName;
+  document.getElementById('bottomPlayerName').textContent = bottomName;
+
+  document.getElementById('topCapturedBar').querySelector('.player-dot').className = `player-dot ${isFlipped ? 'white-dot' : 'black-dot'}`;
+  document.getElementById('bottomCapturedBar').querySelector('.player-dot').className = `player-dot ${isFlipped ? 'black-dot' : 'white-dot'}`;
+
+  // Render HTML icons for captured pieces
+  document.getElementById('topCapturedPieces').innerHTML = topList.map(p =>
+    `<img src="${PIECE_IMAGES[p.color][p.type]}" class="captured-img" alt="${p.type}" />`
+  ).join('');
+
+  document.getElementById('bottomCapturedPieces').innerHTML = bottomList.map(p =>
+    `<img src="${PIECE_IMAGES[p.color][p.type]}" class="captured-img" alt="${p.type}" />`
+  ).join('');
+
+  // Material Advantage badges (+1, +3, etc.)
+  const topAdvEl = document.getElementById('topMaterialAdv');
+  const bottomAdvEl = document.getElementById('bottomMaterialAdv');
+
+  topAdvEl.textContent = '';
+  bottomAdvEl.textContent = '';
+
+  if (diffMaterial > 0) {
+    // White leads
+    if (isFlipped) topAdvEl.textContent = `+${diffMaterial}`;
+    else bottomAdvEl.textContent = `+${diffMaterial}`;
+  } else if (diffMaterial < 0) {
+    // Black leads
+    if (isFlipped) bottomAdvEl.textContent = `+${Math.abs(diffMaterial)}`;
+    else topAdvEl.textContent = `+${Math.abs(diffMaterial)}`;
+  }
+}
+
+function updateGameReview() {
+  if (moveQualityHistory.length === 0) {
+    document.getElementById('estEloVal').textContent = '-- Elo';
+    document.getElementById('accuracyVal').textContent = '--%';
+    document.getElementById('countBest').textContent = '0';
+    document.getElementById('countGood').textContent = '0';
+    document.getElementById('countInacc').textContent = '0';
+    document.getElementById('countMistake').textContent = '0';
+    document.getElementById('countBlunder').textContent = '0';
+    document.getElementById('whiteQualityStats').textContent = '0 Blunders • 0 Mistakes';
+    document.getElementById('blackQualityStats').textContent = '0 Blunders • 0 Mistakes';
+    return;
+  }
+
+  let counts = { best: 0, good: 0, inaccuracy: 0, mistake: 0, blunder: 0, '...': 0 };
+  let whiteBlunders = 0, whiteMistakes = 0;
+  let blackBlunders = 0, blackMistakes = 0;
+  let totalLoss = 0;
+  let analyzedMoves = 0;
+
+  for (const m of moveQualityHistory) {
+    if (m.quality !== '...') {
+      counts[m.quality] = (counts[m.quality] || 0) + 1;
+      totalLoss += m.loss;
+      analyzedMoves++;
+
+      if (m.color === 'w') {
+        if (m.quality === 'blunder') whiteBlunders++;
+        if (m.quality === 'mistake') whiteMistakes++;
+      } else {
+        if (m.quality === 'blunder') blackBlunders++;
+        if (m.quality === 'mistake') blackMistakes++;
+      }
+    }
+  }
+
+  document.getElementById('countBest').textContent = counts.best;
+  document.getElementById('countGood').textContent = counts.good;
+  document.getElementById('countInacc').textContent = counts.inaccuracy;
+  document.getElementById('countMistake').textContent = counts.mistake;
+  document.getElementById('countBlunder').textContent = counts.blunder;
+
+  document.getElementById('whiteQualityStats').textContent = `${whiteBlunders} Blunders • ${whiteMistakes} Mistakes`;
+  document.getElementById('blackQualityStats').textContent = `${blackBlunders} Blunders • ${blackMistakes} Mistakes`;
+
+  if (analyzedMoves === 0) return;
+
+  const avgLoss = totalLoss / analyzedMoves;
+  let accuracy = Math.round(100 * Math.exp(-0.0055 * avgLoss));
+  accuracy = Math.max(30, Math.min(99, accuracy));
+  document.getElementById('accuracyVal').textContent = `${accuracy}%`;
+
+  let estElo = Math.round(700 + (accuracy - 30) * 26 - (counts.blunder * 40) - (counts.mistake * 15));
+  estElo = Math.max(650, Math.min(2800, estElo));
+  document.getElementById('estEloVal').textContent = `~${estElo} Elo`;
+
+  const summaryEl = document.getElementById('reviewSummaryText');
+  if (counts.blunder === 0 && counts.mistake === 0) {
+    summaryEl.textContent = 'Flawless accuracy! GM-level precision without blunders.';
+  } else if (counts.blunder === 0) {
+    summaryEl.textContent = `Solid game! No catastrophic blunders. Found ${counts.best} best moves.`;
+  } else {
+    summaryEl.textContent = `Caution: ${counts.blunder} blunder(s) and ${counts.mistake} mistake(s) occurred. Review move badges below to inspect turning points.`;
+  }
+}
+
+function renderMoveHistoryBadges() {
+  const history = game.history();
+  if (history.length === 0) {
+    const emptyHtml = '<div class="move-list-empty">No moves yet</div>';
+    document.getElementById('moveHistory').innerHTML = emptyHtml;
+    document.getElementById('quickMoveHistory').innerHTML = emptyHtml;
+    return;
+  }
+
+  let html = '';
+  for (let i = 0; i < history.length; i += 2) {
+    const moveNum = Math.floor(i / 2) + 1;
+    const whiteMove = history[i] || '';
+    const blackMove = history[i + 1] || '';
+
+    const whiteReview = moveQualityHistory[i];
+    const blackReview = moveQualityHistory[i + 1];
+
+    const whiteBadge = (whiteReview && whiteReview.quality !== '...')
+      ? `<span class="move-badge badge-${whiteReview.quality}">${whiteReview.quality}</span>`
+      : '';
+    const blackBadge = (blackReview && blackReview.quality !== '...')
+      ? `<span class="move-badge badge-${blackReview.quality}">${blackReview.quality}</span>`
+      : '';
+
+    html += `<div class="move-row">
+      <span class="move-num">${moveNum}.</span>
+      <span>${whiteMove} ${whiteBadge}</span>
+      <span>${blackMove} ${blackBadge}</span>
+    </div>`;
+  }
+  document.getElementById('moveHistory').innerHTML = html;
+  document.getElementById('quickMoveHistory').innerHTML = html;
+}
+
+function checkBotTrigger() {
+  if (currentMode === 'bot' && !game.game_over()) {
+    if (game.turn() !== playerColor) {
+      setTimeout(() => {
+        requestBotMove();
+      }, 250);
+    }
+  }
+}
+
+function updateUI() {
+  const currentOpening = detectOpening();
+  document.getElementById('openingName').textContent = currentOpening;
+
+  const statusEl = document.getElementById('gameStatus');
+  if (game.in_checkmate()) {
+    statusEl.textContent = 'Checkmate!';
+    statusEl.style.color = '#f87171';
+  } else if (game.in_draw()) {
+    statusEl.textContent = 'Draw';
+    statusEl.style.color = '#fbbf24';
+  } else if (game.in_check()) {
+    statusEl.textContent = 'Check!';
+    statusEl.style.color = '#fb923c';
+  } else {
+    statusEl.textContent = `${game.turn() === 'w' ? 'White' : 'Black'} to move`;
+    statusEl.style.color = '#4ade80';
+  }
+
+  updateCapturedPiecesDisplay();
+  renderMoveHistoryBadges();
+
+  if (currentMode === 'analysis') {
+    analyzePosition();
+  }
+}
+
+function setGameMode(mode) {
+  currentMode = mode;
+  selectedSquare = null;
+  clearClickHighlights();
+
+  const botBtn = document.getElementById('modeBotBtn');
+  const analyzeBtn = document.getElementById('modeAnalyzeBtn');
+  const friendBtn = document.getElementById('modeFriendBtn');
+  const botControls = document.getElementById('botControls');
+  const friendControls = document.getElementById('friendControls');
+  const playBestBtn = document.getElementById('playBestBtn');
+  const chatTabBtn = document.getElementById('chatTabBtn');
+
+  if (botBtn) botBtn.classList.toggle('active', mode === 'bot');
+  if (analyzeBtn) analyzeBtn.classList.toggle('active', mode === 'analysis');
+  if (friendBtn) friendBtn.classList.toggle('active', mode === 'friend');
+
+  if (mode === 'bot') {
+    if (botControls) botControls.style.display = 'flex';
+    if (friendControls) friendControls.style.display = 'none';
+    if (chatTabBtn) chatTabBtn.style.display = 'none';
+    if (playBestBtn) playBestBtn.style.display = 'none';
+    document.getElementById('panelPrimaryLabel').textContent = 'Bot Status';
+    document.getElementById('bestMoveArrow').setAttribute('visibility', 'hidden');
+    clearHighlights();
+  } else if (mode === 'friend') {
+    if (botControls) botControls.style.display = 'none';
+    if (friendControls) friendControls.style.display = 'flex';
+    if (chatTabBtn) chatTabBtn.style.display = 'inline-block';
+    if (playBestBtn) playBestBtn.style.display = 'none';
+    document.getElementById('panelPrimaryLabel').textContent = 'Friend Match';
+    document.getElementById('bestMoveArrow').setAttribute('visibility', 'hidden');
+    clearHighlights();
+  } else {
+    if (botControls) botControls.style.display = 'none';
+    if (friendControls) friendControls.style.display = 'none';
+    if (chatTabBtn) chatTabBtn.style.display = 'none';
+    if (playBestBtn) playBestBtn.style.display = 'block';
+    document.getElementById('panelPrimaryLabel').textContent = 'Best Move Suggestion';
+    analyzePosition();
+  }
+}
+
+function startNewBotGame() {
+  game.reset();
+  redoStack = [];
+  moveQualityHistory = [];
+  selectedSquare = null;
+  isBotThinking = false;
+  clearClickHighlights();
+  clearHighlights();
+
+  playerColor = document.getElementById('botSideSelect').value;
+  botRating = parseInt(document.getElementById('botRatingSelect').value, 10);
+
+  board.orientation(playerColor === 'w' ? 'white' : 'black');
+  board.start();
+
+  updateEvalBar(0, '0.0');
+  document.getElementById('evalScore').textContent = '+0.00';
+  updateGameReview();
+  updateUI();
+
+  if (playerColor === 'b') {
+    setTimeout(() => {
+      requestBotMove();
+    }, 400);
+  } else {
+    document.getElementById('bestMoveText').textContent = 'Your turn!';
+    document.getElementById('engineSubtext').textContent = `Playing against Stockfish bot (${botRating})`;
+    document.getElementById('pvLineText').textContent = 'Make your opening move...';
+  }
+}
+
+// Full Analysis Report Copy function
+function copyFullAnalysisReport() {
+  const opening = detectOpening();
+  const evalScore = document.getElementById('evalScore').textContent;
+  const accuracy = document.getElementById('accuracyVal').textContent;
+  const estElo = document.getElementById('estEloVal').textContent;
+  const bestCount = document.getElementById('countBest').textContent;
+  const goodCount = document.getElementById('countGood').textContent;
+  const inaccCount = document.getElementById('countInacc').textContent;
+  const mistakeCount = document.getElementById('countMistake').textContent;
+  const blunderCount = document.getElementById('countBlunder').textContent;
+  const whiteStats = document.getElementById('whiteQualityStats').textContent;
+  const blackStats = document.getElementById('blackQualityStats').textContent;
+  const pgn = game.pgn() || 'No moves played yet.';
+
+  const report = [
+    '=== B CHESS ANALYZER — FULL GAME REPORT ===',
+    `Opening / Gambit : ${opening}`,
+    `Final Evaluation : ${evalScore}`,
+    `Move Accuracy    : ${accuracy}`,
+    `Estimated Elo    : ${estElo}`,
+    '-------------------------------------------',
+    'MOVE QUALITY BREAKDOWN:',
+    `★ Best Moves     : ${bestCount}`,
+    `✓ Good Moves     : ${goodCount}`,
+    `?! Inaccuracies  : ${inaccCount}`,
+    `? Mistakes       : ${mistakeCount}`,
+    `?? Blunders      : ${blunderCount}`,
+    '-------------------------------------------',
+    `White Stats      : ${whiteStats}`,
+    `Black Stats      : ${blackStats}`,
+    '-------------------------------------------',
+    'PGN MOVE RECORD:',
+    pgn,
+    '==========================================='
+  ].join('\n');
+
+  navigator.clipboard.writeText(report).then(() => {
+    const msg = document.getElementById('copySuccessMsg');
+    msg.style.display = 'block';
+    setTimeout(() => {
+      msg.style.display = 'none';
+    }, 3500);
+  }).catch(err => {
+    alert('Analysis report copied to console!');
+    console.log(report);
+  });
+}
+
+$(document).ready(function() {
+  const config = {
+    draggable: true,
+    position: 'start',
+    pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
+    onDragStart: onDragStart,
+    onDrop: onDrop,
+    onSnapEnd: onSnapEnd
+  };
+
+  board = Chessboard('myBoard', config);
+
+  let lastTouchTime = 0;
+  $('#myBoard').on('touchstart', '.square-55d63', function() {
+    lastTouchTime = Date.now();
+  });
+
+  $('#myBoard').on('click touchend', '.square-55d63', function(e) {
+    if (dragActive) return;
+    if (Date.now() - lastDropTime < 400) return;
+    if (e.type === 'click' && Date.now() - lastTouchTime < 450) {
+      return;
+    }
+    const square = $(this).attr('data-square');
+    if (square) {
+      handleSquareClick(square);
+    }
+  });
+
+  $(window).resize(() => {
+    board.resize();
+    if (currentBestMoveUci && currentMode === 'analysis') {
+      drawBestMoveArrow(currentBestMoveUci);
+    }
+  });
+
+  initStockfish();
+  updateUI();
+
+  // Copy Analysis Button Listener
+  document.getElementById('copyAnalysisBtn').addEventListener('click', copyFullAnalysisReport);
+
+  // Mode Switchers
+  document.getElementById('modeAnalyzeBtn').addEventListener('click', () => {
+    setGameMode('analysis');
+  });
+
+  document.getElementById('modeBotBtn').addEventListener('click', () => {
+    setGameMode('bot');
+    startNewBotGame();
+  });
+
+  const friendBtn = document.getElementById('modeFriendBtn');
+  if (friendBtn) {
+    friendBtn.addEventListener('click', () => {
+      setGameMode('friend');
+    });
+  }
+  const loginBtn = document.getElementById('googleLoginBtn');
+  if (loginBtn) loginBtn.addEventListener('click', triggerGoogleLogin);
+
+  const signoutBtn = document.getElementById('signOutBtn');
+  if (signoutBtn) signoutBtn.addEventListener('click', handleLogout);
+
+  const createBtn = document.getElementById('createRoomBtn');
+  if (createBtn) createBtn.addEventListener('click', createFriendRoom);
+
+  const joinBtn = document.getElementById('joinRoomBtn');
+  if (joinBtn) joinBtn.addEventListener('click', joinFriendRoom);
+
+  const copyBtn = document.getElementById('copyRoomCodeBtn');
+  if (copyBtn) copyBtn.addEventListener('click', copyRoomCode);
+
+  const micBtn = document.getElementById('toggleMicBtn');
+  if (micBtn) micBtn.addEventListener('click', toggleMicrophone);
+
+  const drawBtn = document.getElementById('offerDrawBtn');
+  if (drawBtn) drawBtn.addEventListener('click', offerDrawGame);
+
+  const resBtn = document.getElementById('resignBtn');
+  if (resBtn) resBtn.addEventListener('click', resignGame);
+
+  const chatF = document.getElementById('chatForm');
+  if (chatF) chatF.addEventListener('submit', handleSendChat);
+
+  document.getElementById('startBotGameBtn').addEventListener('click', () => {
+    startNewBotGame();
+  });
+
+  document.getElementById('botRatingSelect').addEventListener('change', (e) => {
+    botRating = parseInt(e.target.value, 10);
+  });
+
+  // Sound Toggle Button
+  document.getElementById('soundToggleBtn').addEventListener('click', (e) => {
+    soundEnabled = !soundEnabled;
+    e.target.textContent = soundEnabled ? '🔊 Sound: ON' : '🔇 Sound: OFF';
+    e.target.classList.toggle('active-pill', soundEnabled);
+    if (soundEnabled) playSound('move');
+  });
+
+  // Undo Button
+  document.getElementById('undoBtn').addEventListener('click', () => {
+    if (isBotThinking) return;
+    clearClickHighlights();
+    selectedSquare = null;
+
+    if (currentMode === 'bot') {
+      game.undo();
+      game.undo();
+      moveQualityHistory.pop();
+      moveQualityHistory.pop();
+    } else {
+      const move = game.undo();
+      if (move) {
+        redoStack.push(move);
+        moveQualityHistory.pop();
+      }
+    }
+    board.position(game.fen());
+    updateGameReview();
+    updateUI();
+  });
+
+  // Redo Button
+  document.getElementById('redoBtn').addEventListener('click', () => {
+    if (currentMode === 'bot' || isBotThinking) return;
+    clearClickHighlights();
+    selectedSquare = null;
+    if (redoStack.length > 0) {
+      const move = redoStack.pop();
+      game.move(move);
+      board.position(game.fen());
+      updateUI();
+    }
+  });
+
+  // Flip Board
+  document.getElementById('flipBtn').addEventListener('click', () => {
+    board.flip();
+    updateCapturedPiecesDisplay();
+    if (currentBestMoveUci && currentMode === 'analysis') {
+      drawBestMoveArrow(currentBestMoveUci);
+    }
+  });
+
+  // Play Best Move Button
+  document.getElementById('playBestBtn').addEventListener('click', () => {
+    if (currentMode === 'bot' || !currentBestMoveUci || game.game_over()) return;
+    clearClickHighlights();
+    selectedSquare = null;
+    const from = currentBestMoveUci.slice(0, 2);
+    const to = currentBestMoveUci.slice(2, 4);
+    const promotion = currentBestMoveUci.length > 4 ? currentBestMoveUci[4] : 'q';
+
+    const beforeEval = currentPositionCp;
+    const move = game.move({ from, to, promotion });
+    if (move) {
+      redoStack = [];
+      board.position(game.fen());
+      recordMoveQuality(move, beforeEval);
+      handleMoveEffects(move);
+      updateUI();
+    }
+  });
+
+  // Reset Button
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    clearClickHighlights();
+    selectedSquare = null;
+    moveQualityHistory = [];
+    if (currentMode === 'bot') {
+      startNewBotGame();
+    } else {
+      game.reset();
+      redoStack = [];
+      board.start();
+      updateEvalBar(0, '0.0');
+      document.getElementById('evalScore').textContent = '+0.00';
+      updateGameReview();
+      updateUI();
+    }
+  });
+
+  // Toggle Best Move Arrow
+  document.getElementById('arrowToggleBtn').addEventListener('click', (e) => {
+    showBestMoveArrow = !showBestMoveArrow;
+    e.target.textContent = showBestMoveArrow ? '🏹 Arrow: ON' : '🏹 Arrow: OFF';
+    e.target.classList.toggle('active-pill', showBestMoveArrow);
+    if (currentBestMoveUci && currentMode === 'analysis') {
+      drawBestMoveArrow(currentBestMoveUci);
+    }
+  });
+
+  // Theme Toggle
+  document.getElementById('themeBtn').addEventListener('click', (e) => {
+    document.body.classList.toggle('wood-theme');
+    const isWood = document.body.classList.contains('wood-theme');
+    e.target.textContent = isWood ? 'Wood & Cream' : 'Green & White';
+  });
+
+  // Load FEN
+  document.getElementById('loadFenBtn').addEventListener('click', () => {
+    const fen = document.getElementById('fenInput').value.trim();
+    if (fen && game.load(fen)) {
+      redoStack = [];
+      moveQualityHistory = [];
+      clearClickHighlights();
+      selectedSquare = null;
+      board.position(game.fen());
+      updateGameReview();
+      updateUI();
+    } else {
+      alert('Invalid FEN string!');
+    }
+  });
+
+  // Tabs Switching
+  document.querySelectorAll('.tab').forEach(tabBtn => {
+    tabBtn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active-content'));
+      tabBtn.classList.add('active');
+      const targetId = tabBtn.getAttribute('data-tab');
+      document.getElementById(targetId).classList.add('active-content');
+    });
+  });
+
+  // Depth Slider
+  document.getElementById('depthSlider').addEventListener('input', (e) => {
+    targetDepth = parseInt(e.target.value, 10);
+    document.getElementById('depthSliderVal').textContent = targetDepth;
+    if (currentMode === 'analysis') {
+      analyzePosition();
+    }
+  });
+});
