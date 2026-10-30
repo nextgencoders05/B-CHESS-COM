@@ -2,7 +2,7 @@
 
 // 1. FIREBASE CONFIGURATION (Direct from Project Setup)
 const firebaseConfig = {
-  apiKey: "AIzaSyDy0akMUtzmPjg9Z8ebyFWtmT4mc9bRHG0",
+  apiKey: "AIzaSyDy0aKMuTzmPjg9Z8ebyFWtmT4mc9bRHG0",
   authDomain: "b--chess-analyser.firebaseapp.com",
   databaseURL: "https://b--chess-analyser-default-rtdb.firebaseio.com",
   projectId: "b--chess-analyser",
