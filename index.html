@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>B Chess Analyzer</title>
+  <!-- Chessboard.js CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header -->
+    <header class="top-bar">
+      <div class="brand">
+        <span class="pawn-icon">♟</span>
+        <div>
+          <h1>B Chess Analyzer</h1>
+          <p>Online Multiplayer • Live Voice Chat • Stockfish Engine • Review</p>
+        </div>
+      </div>
+      <div class="theme-controls">
+        <button id="soundToggleBtn" class="pill-btn active-pill">🔊 Sound: ON</button>
+        <button id="arrowToggleBtn" class="pill-btn active-pill">🏹 Arrow: ON</button>
+        <button id="themeBtn" class="pill-btn">Green & White</button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-grid">
+      <!-- Left: Board Section -->
+      <section class="board-card">
+        <!-- Game Mode Selection Banner -->
+        <div class="mode-bar">
+          <div class="mode-selector">
+            <span class="mode-label">Mode:</span>
+            <div class="mode-buttons">
+              <button id="modeAnalyzeBtn" class="mode-btn active">Analysis</button>
+              <button id="modeBotBtn" class="mode-btn">Play vs Bot</button>
+              <button id="modeFriendBtn" class="mode-btn">👥 Play with Friend</button>
+            </div>
+          </div>
+
+          <!-- BOT SETTINGS BAR -->
+          <div id="botControls" class="bot-controls" style="display: none;">
+            <div class="bot-setting">
+              <label for="botRatingSelect">Bot Elo:</label>
+              <select id="botRatingSelect" class="styled-select">
+                <option value="800">800 (Beginner)</option>
+                <option value="1100">1100 (Casual)</option>
+                <option value="1400" selected>1400 (Intermediate)</option>
+                <option value="1700">1700 (Advanced)</option>
+                <option value="2000">2000 (Expert)</option>
+                <option value="2500">2500+ (Master / Stockfish Max)</option>
+              </select>
+            </div>
+            <div class="bot-setting">
+              <label for="botSideSelect">Play as:</label>
+              <select id="botSideSelect" class="styled-select">
+                <option value="w" selected>White</option>
+                <option value="b">Black</option>
+              </select>
+            </div>
+            <button id="startBotGameBtn" class="pill-btn bot-action-btn">New Game</button>
+          </div>
+
+          <!-- MULTIPLAYER & LIVE VOICE CHAT CONTROLS -->
+          <div id="friendControls" class="friend-controls" style="display: none;">
+            <!-- Room Creation / Join Row -->
+            <div class="room-action-row">
+              <button id="createRoomBtn" class="pill-btn bot-action-btn">Create Room</button>
+              <div class="room-input-group">
+                <input type="text" id="joinRoomInput" placeholder="Enter 6-digit Code" maxlength="6" />
+                <button id="joinRoomBtn" class="pill-btn">Join</button>
+              </div>
+            </div>
+
+            <!-- Active Room Info Bar -->
+            <div id="activeRoomBar" class="active-room-bar" style="display: none;">
+              <div class="room-info-pill">
+                <span>Room: <strong id="currentRoomCode">------</strong></span>
+                <button id="copyInviteLinkBtn" class="copy-link-btn" title="Copy shareable link">🔗 Copy Link</button>
+              </div>
+              <div class="room-status-pill">
+                <span id="playerRoleBadge" class="role-badge">Waiting...</span>
+                <span id="opponentStatusBadge" class="opponent-badge">Opponent: Waiting</span>
+              </div>
+            </div>
+
+            <!-- Voice Call Control Bar -->
+            <div id="voiceControlBar" class="voice-control-bar" style="display: none;">
+              <button id="startVoiceBtn" class="voice-btn">🎙️ Start Voice Chat</button>
+              <button id="toggleMuteBtn" class="voice-btn mute-btn" style="display: none;">🎤 Mic: ON</button>
+              <span id="voiceStatusText" class="voice-status">Voice chat idle</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top Captured Pieces Bar -->
+        <div class="captured-bar" id="topCapturedBar">
+          <div class="player-tag">
+            <span class="player-dot black-dot"></span>
+            <span class="player-name" id="topPlayerName">Black</span>
+          </div>
+          <div class="captured-pieces-list" id="topCapturedPieces"></div>
+          <span class="material-advantage" id="topMaterialAdv"></span>
+        </div>
+
+        <!-- Chessboard + Eval Bar -->
+        <div class="board-and-eval">
+          <div class="eval-bar-container" id="evalBarContainer" title="Live Stockfish Evaluation">
+            <div class="eval-bar-black" id="evalBarBlack"></div>
+            <div class="eval-bar-white" id="evalBarWhite" style="height: 50%;"></div>
+            <span class="eval-bar-score" id="evalBarText">0.0</span>
+          </div>
+
+          <div class="board-relative-box" id="boardRelativeBox">
+            <div id="myBoard" class="board-wrapper"></div>
+            <svg id="arrowOverlay" class="arrow-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <defs>
+                <marker id="arrowhead" markerWidth="3.5" markerHeight="3.5" refX="2.3" refY="1.75" orient="auto">
+                  <polygon points="0 0, 3.5 1.75, 0 3.5" fill="rgba(56, 189, 248, 0.9)" />
+                </marker>
+              </defs>
+              <line id="bestMoveArrow" x1="0" y1="0" x2="0" y2="0" stroke="rgba(56, 189, 248, 0.85)" stroke-width="2.4" stroke-linecap="round" marker-end="url(#arrowhead)" visibility="hidden" />
+            </svg>
+          </div>
+        </div>
+
+        <!-- Bottom Captured Pieces Bar -->
+        <div class="captured-bar bottom-captured-bar" id="bottomCapturedBar">
+          <div class="player-tag">
+            <span class="player-dot white-dot"></span>
+            <span class="player-name" id="bottomPlayerName">White</span>
+          </div>
+          <div class="captured-pieces-list" id="bottomCapturedPieces"></div>
+          <span class="material-advantage" id="bottomMaterialAdv"></span>
+        </div>
+
+        <div class="board-controls">
+          <button id="undoBtn" class="control-btn">↩ Undo</button>
+          <button id="redoBtn" class="control-btn">↪ Redo</button>
+          <button id="flipBtn" class="control-btn">⇅ Flip</button>
+          <button id="playBestBtn" class="control-btn highlight-btn">⚡ Play Best</button>
+          <button id="resetBtn" class="control-btn active-outline">↺ Reset</button>
+        </div>
+      </section>
+
+      <!-- Right: Analysis & Review Panel -->
+      <section class="analysis-card">
+        <div class="tabs">
+          <button class="tab active" data-tab="analysisTab">Analysis</button>
+          <button class="tab" data-tab="reviewTab">Game Review & Elo</button>
+          <button class="tab" data-tab="movesTab">Move List</button>
+          <button class="tab" data-tab="evalTab">Evaluation</button>
+        </div>
+
+        <!-- TAB 1: ANALYSIS -->
+        <div id="analysisTab" class="tab-content active-content">
+          <div class="panel-box best-move-box">
+            <div class="best-move-header">
+              <span class="label" id="panelPrimaryLabel">Best Move Suggestion</span>
+              <span class="engine-badge" id="engineBadge">Stockfish Active</span>
+            </div>
+            <h2 id="bestMoveText">Calculating...</h2>
+            <p id="engineSubtext">Initializing Stockfish WebAssembly Engine...</p>
+            <div class="pv-line" id="pvLineText">Line: Waiting for engine output...</div>
+          </div>
+
+          <div class="stats-grid">
+            <div class="panel-box">
+              <span class="label">Evaluation</span>
+              <div class="stat-val" id="evalScore">+0.00</div>
+            </div>
+            <div class="panel-box">
+              <span class="label">Depth</span>
+              <div class="stat-val" id="depthVal">0 / 15</div>
+            </div>
+            <div class="panel-box opening-panel-box">
+              <span class="label">Opening / Gambit</span>
+              <div class="stat-val opening-badge" id="openingName">Starting Position</div>
+            </div>
+            <div class="panel-box">
+              <span class="label">Status</span>
+              <div class="stat-val status-ready" id="gameStatus">White to move</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: GAME REVIEW, BLUNDERS & ELO RATING -->
+        <div id="reviewTab" class="tab-content">
+          <div class="panel-box review-hero-card">
+            <div class="review-header">
+              <div>
+                <span class="label">Estimated Game Performance</span>
+                <div class="performance-elo" id="estEloVal">-- Elo</div>
+              </div>
+              <div class="accuracy-circle">
+                <span class="accuracy-val" id="accuracyVal">--%</span>
+                <span class="accuracy-sub">Accuracy</span>
+              </div>
+            </div>
+            <p class="review-summary" id="reviewSummaryText">Make moves to generate your live game review, accuracy score, and blunder report.</p>
+          </div>
+
+          <div class="panel-box">
+            <span class="label">Move Quality Breakdown</span>
+            <div class="quality-grid">
+              <div class="quality-item quality-best">
+                <span class="quality-badge">★ Best</span>
+                <span class="quality-count" id="countBest">0</span>
+              </div>
+              <div class="quality-item quality-good">
+                <span class="quality-badge">✓ Good</span>
+                <span class="quality-count" id="countGood">0</span>
+              </div>
+              <div class="quality-item quality-inaccuracy">
+                <span class="quality-badge">?! Inaccuracy</span>
+                <span class="quality-count" id="countInacc">0</span>
+              </div>
+              <div class="quality-item quality-mistake">
+                <span class="quality-badge">? Mistake</span>
+                <span class="quality-count" id="countMistake">0</span>
+              </div>
+              <div class="quality-item quality-blunder">
+                <span class="quality-badge">?? Blunder</span>
+                <span class="quality-count" id="countBlunder">0</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel-box">
+            <span class="label">Side Comparison (White vs Black)</span>
+            <div class="side-comparison">
+              <div class="side-col">
+                <strong>White</strong>
+                <div id="whiteQualityStats">0 Blunders • 0 Mistakes</div>
+              </div>
+              <div class="side-divider"></div>
+              <div class="side-col">
+                <strong>Black</strong>
+                <div id="blackQualityStats">0 Blunders • 0 Mistakes</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: MOVE LIST -->
+        <div id="movesTab" class="tab-content">
+          <div class="panel-box history-box">
+            <span class="label">Full Move History & Feedback</span>
+            <div id="moveHistory" class="move-list-empty">No moves yet</div>
+          </div>
+        </div>
+
+        <!-- TAB 4: EVALUATION DETAILS -->
+        <div id="evalTab" class="tab-content">
+          <div class="panel-box">
+            <span class="label">Win Probability Breakdown</span>
+            <div class="win-prob-bar">
+              <div id="whiteProbBar" class="prob-white" style="width: 50%">White 50%</div>
+              <div id="blackProbBar" class="prob-black" style="width: 50%">Black 50%</div>
+            </div>
+            <p class="eval-explain" id="evalExplainText">Position is balanced.</p>
+          </div>
+          <div class="panel-box">
+            <span class="label">Engine Depth Setting</span>
+            <input type="range" id="depthSlider" min="8" max="20" value="15" style="width:100%;" />
+            <div style="font-size:12px; color:#94a3b8; margin-top:4px;">Target Depth: <span id="depthSliderVal">15</span></div>
+          </div>
+        </div>
+
+        <!-- Common Quick Move History Preview -->
+        <div class="panel-box history-box" id="quickHistoryBox">
+          <span class="label">Recent Moves</span>
+          <div id="quickMoveHistory" class="move-list-empty">No moves yet</div>
+        </div>
+
+        <!-- Copy Analysis Action Button -->
+        <div class="panel-box action-box">
+          <button id="copyAnalysisBtn" class="copy-analysis-btn">📋 Copy Full Analysis Report</button>
+          <div id="copySuccessMsg" class="copy-success-msg" style="display: none;">✓ Copied Analysis Report to Clipboard!</div>
+        </div>
+
+        <!-- Load FEN -->
+        <div class="panel-box pgn-box">
+          <span class="label">Load FEN Position</span>
+          <div class="fen-input-row">
+            <input type="text" id="fenInput" placeholder="Paste FEN string here..." />
+            <button id="loadFenBtn" class="control-btn">Load</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Hidden Remote Audio Element for PeerJS Voice Chat -->
+  <audio id="remoteAudio" autoplay playsinline></audio>
+
+  <!-- Libraries: jQuery, Chess.js, Chessboard.js -->
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+  <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+
+  <!-- Firebase App & Realtime Database SDKs (Compat v9) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+  <!-- PeerJS for WebRTC Direct Peer-to-Peer Voice Chat -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+  <script src="script.js"></script>
+</body>
+</html>
