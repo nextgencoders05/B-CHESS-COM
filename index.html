@@ -80,6 +80,8 @@
                 <input type="text" id="roomCodeInput" placeholder="Room Code" class="styled-select" style="width: 100px; text-transform: uppercase;" maxlength="6" />
                 <button id="joinRoomBtn" class="pill-btn">Join</button>
               </div>
+              <button id="friendsBtn" class="pill-btn">👥 Friends</button>
+              <button id="matchHistoryBtn" class="pill-btn">📜 History</button>
             </div>
             <div id="activeRoomInfo" class="active-room-bar" style="display: none;">
               <div class="active-room-header">
@@ -111,12 +113,7 @@
           </div>
           <div class="captured-pieces-list" id="topCapturedPieces"></div>
           <span class="material-advantage" id="topMaterialAdv"></span>
-        </div>
-
-        <div id="friendClockBar" class="friend-clock-bar" style="display:none;">
-          <div id="blackClock" class="chess-clock">10:00</div>
-          <span id="clockModeLabel" class="clock-mode-label">Rapid</span>
-          <div id="whiteClock" class="chess-clock">10:00</div>
+          <div id="blackClock" class="chess-clock captured-clock" style="display:none;">10:00</div>
         </div>
 
         <div class="board-and-eval">
@@ -149,6 +146,7 @@
           </div>
           <div class="captured-pieces-list" id="bottomCapturedPieces"></div>
           <span class="material-advantage" id="bottomMaterialAdv"></span>
+          <div id="whiteClock" class="chess-clock captured-clock" style="display:none;">10:00</div>
         </div>
 
         <div class="board-controls">
@@ -265,7 +263,7 @@
         <!-- TAB 3: MOVE LIST -->
         <div id="movesTab" class="tab-content">
           <div class="panel-box history-box">
-            <span class="label">Full Move History & Feedback</span>
+            <div class="move-list-header-row"><span class="label">Full Move History & Feedback</span><button id="copyMovesBtn" class="pill-btn">📋 Copy Moves</button></div>
             <div id="moveHistory" class="move-list-empty">No moves yet</div>
           </div>
         </div>
@@ -360,6 +358,56 @@
         </button>
       </div>
       <button id="cancelFriendTimeBtn" class="pill-btn">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Pawn Promotion Modal -->
+  <div id="promotionModal" class="skill-modal-overlay" style="display:none;">
+    <div class="skill-modal-window promotion-modal-window">
+      <div class="modal-chess-icon">♟</div>
+      <h2>Choose Promotion</h2>
+      <p class="modal-subtext">Select the piece you want your pawn to become.</p>
+      <div class="promotion-grid">
+        <button class="promotion-choice" data-promotion="q"><span>♛</span><strong>Queen</strong></button>
+        <button class="promotion-choice" data-promotion="r"><span>♜</span><strong>Rook</strong></button>
+        <button class="promotion-choice" data-promotion="b"><span>♝</span><strong>Bishop</strong></button>
+        <button class="promotion-choice" data-promotion="n"><span>♞</span><strong>Knight</strong></button>
+      </div>
+      <button id="cancelPromotionBtn" class="pill-btn">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Friends / Match History Modal -->
+  <div id="friendsModal" class="skill-modal-overlay" style="display:none;">
+    <div class="skill-modal-window friends-modal-window">
+      <div class="modal-chess-icon">👥</div>
+      <h2>Friends & Match History</h2>
+      <div class="friends-tabs">
+        <button id="friendsTabBtn" class="friends-tab active">Friends</button>
+        <button id="requestsTabBtn" class="friends-tab">Requests</button>
+        <button id="historyTabBtn" class="friends-tab">History</button>
+      </div>
+      <div id="friendsPanel">
+        <div class="friend-search-row">
+          <input id="friendSearchInput" class="profile-input" placeholder="Search username" maxlength="20" />
+          <button id="friendSearchBtn" class="pill-btn highlight-btn">Search</button>
+        </div>
+        <div id="friendSearchResults" class="friend-list"></div>
+        <div class="friend-section-title">Your Friends</div>
+        <div id="friendsList" class="friend-list"></div>
+      </div>
+      <div id="requestsPanel" style="display:none;">
+        <div class="friend-section-title">Incoming Requests</div>
+        <div id="incomingRequests" class="friend-list"></div>
+        <div class="friend-section-title">Sent Requests</div>
+        <div id="outgoingRequests" class="friend-list"></div>
+        <div class="friend-section-title">Challenges</div>
+        <div id="incomingChallenges" class="friend-list"></div>
+      </div>
+      <div id="historyPanel" style="display:none;">
+        <div id="matchHistoryList" class="friend-list"></div>
+      </div>
+      <button id="closeFriendsModalBtn" class="pill-btn">Close</button>
     </div>
   </div>
 

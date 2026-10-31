@@ -37,6 +37,9 @@ let friendClockTurn = null;
 let friendClockExpiredHandled = false;
 let friendRoomListenerRef = null;
 let friendChatListenerRef = null;
+let friendHistorySavedCodes = new Set();
+let pendingPromotionMove = null;
+let friendProfileListeners = [];
 
 // WebRTC Live Voice Chat State
 let peerConnection = null;
@@ -166,6 +169,7 @@ auth.onAuthStateChanged(async (user) => {
     currentUserName = data.username || data.name || user.displayName || "Player";
     currentUserPhoto = data.photoData || user.photoURL || "";
     updateProfileUI();
+    setTimeout(handleIncomingFriendLink, 250);
 
     // After Google sign-in, require Terms & Conditions acceptance once per terms version.
     if (!hasAcceptedTerms()) {
@@ -338,7 +342,7 @@ function createFriendRoom() {
   showFriendTimeModal((seconds) => { friendTimeChosen = true; createFriendRoomWithTime(seconds); });
 }
 
-function createFriendRoomWithTime(timeSeconds) {
+function createFriendRoomWithTime(timeSeconds, challengeFriendId = null, challengeFriendName = null) {
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   currentRoomCode = code;
   myOnlineColor = 'w';
@@ -358,13 +362,19 @@ function createFriendRoomWithTime(timeSeconds) {
     gameFen: 'start',
     status: 'waiting',
     timeControl: friendTimeControl,
-    gameOver: false
+    gameOver: false,
+    challengeFriendId: challengeFriendId || null,
+    challengeFriendName: challengeFriendName || null,
+    moveHistory: []
   }).then(() => {
     document.getElementById("activeRoomInfo").style.display = "flex";
     document.getElementById("activeRoomCode").textContent = code;
     updateTimeControlUI();
     listenToRoom(code, true);
     startVoiceChat(code, true);
+    if (challengeFriendId) {
+      database.ref('users/' + challengeFriendId + '/challenges/' + code).set({fromId: currentUserId, fromName: currentUserName, timeLabel: friendTimeLabel(friendTimeControl), createdAt: firebase.database.ServerValue.TIMESTAMP});
+    }
   });
 }
 
@@ -428,17 +438,13 @@ function formatClock(seconds) {
 
 function updateTimeControlUI() {
   const label = document.getElementById('activeTimeControl');
-  const clockBar = document.getElementById('friendClockBar');
-  const modeLabel = document.getElementById('clockModeLabel');
-  if (!label || !clockBar) return;
+  const w = document.getElementById('whiteClock');
+  const b = document.getElementById('blackClock');
   const names = { 600: 'Rapid • 10 min', 300: 'Blitz • 5 min', 60: 'Bullet • 1 min', 0: 'No Timer' };
-  label.textContent = '⏱ ' + (names[friendTimeControl] || 'No Timer');
-  if (friendTimeControl > 0) {
-    clockBar.style.display = 'flex';
-    if (modeLabel) modeLabel.textContent = names[friendTimeControl].split(' • ')[0];
-  } else {
-    clockBar.style.display = 'none';
-  }
+  if (label) label.textContent = '⏱ ' + (names[friendTimeControl] || 'No Timer');
+  const show = friendTimeControl > 0;
+  if (w) w.style.display = show ? 'block' : 'none';
+  if (b) b.style.display = show ? 'block' : 'none';
 }
 
 function resetFriendClockUI() {
@@ -541,6 +547,8 @@ function leaveFriendGame() {
   roomRef.once('value').then(snap => {
     const val = snap.val() || {};
     const opponentId = val.creatorId === currentUserId ? val.guestId : val.creatorId;
+    const next = {...val, gameOver:true, result:'left', leftBy:currentUserId, winner:opponentId || null};
+    saveFriendMatchHistory(next, code);
     return roomRef.update({ gameOver: true, result: 'left', leftBy: currentUserId, winner: opponentId || null });
   }).finally(() => {
     cleanupFriendGame(false);
@@ -597,12 +605,20 @@ function listenToRoom(code, isCreator) {
       if (chatOpp) chatOpp.textContent = oppLabel + " (" + (isCreator ? val.guestRating : val.creatorRating) + ")";
     }
 
-    if (val.gameFen && val.gameFen !== game.fen()) {
+    if (Array.isArray(val.moveHistory) && val.moveHistory.length !== game.history().length) {
+      try {
+        game.reset();
+        val.moveHistory.forEach(san => game.move(san));
+        board.position(game.fen());
+        updateUI();
+      } catch (e) { console.warn('Move history sync failed:', e); }
+    } else if (val.gameFen && val.gameFen !== game.fen()) {
       if (val.gameFen === 'start') game.reset();
       else game.load(val.gameFen);
       board.position(game.fen());
       playSound('move');
       updateUI();
+      setTimeout(showKingStateEffects, 40);
     }
 
     if (val.drawOffer && val.drawOffer !== currentUserId) {
@@ -628,6 +644,7 @@ function listenToRoom(code, isCreator) {
     }
 
     if (val.gameOver) {
+      saveFriendMatchHistory(val, code);
       stopFriendClock();
       lockModeButtons(false);
       if (val.result === 'left') {
@@ -652,12 +669,165 @@ function listenToRoom(code, isCreator) {
   listenForChat(code);
 }
 
+function friendTimeLabel(seconds) {
+  return ({600:'Rapid • 10 min',300:'Blitz • 5 min',60:'Bullet • 1 min',0:'No Timer'})[Number(seconds)||0] || 'No Timer';
+}
+
+function saveFriendMatchHistory(roomValue, code) {
+  if (!roomValue || !currentUserId || !roomValue.creatorId || !roomValue.guestId || friendHistorySavedCodes.has(code)) return;
+  friendHistorySavedCodes.add(code);
+  const iAmWhite = roomValue.creatorId === currentUserId;
+  const opponentId = iAmWhite ? roomValue.guestId : roomValue.creatorId;
+  const opponentName = iAmWhite ? roomValue.guestName : roomValue.creatorName;
+  let result = 'draw';
+  if (roomValue.result === 'checkmate' || roomValue.result === 'timeout' || roomValue.result === 'resigned') result = roomValue.winner === currentUserId ? 'win' : 'loss';
+  if (roomValue.result === 'left') result = roomValue.winner === currentUserId ? 'win' : 'loss';
+  const record = {
+    roomCode: code,
+    opponentId,
+    opponentName: opponentName || 'Player',
+    result,
+    resultType: roomValue.result || 'unknown',
+    winnerId: roomValue.winner || null,
+    timeControl: Number(roomValue.timeControl) || 0,
+    timeLabel: friendTimeLabel(roomValue.timeControl),
+    moves: roomValue.moveHistory || game.history(),
+    playedAt: firebase.database.ServerValue.TIMESTAMP
+  };
+  database.ref('users/' + currentUserId + '/matchHistory/' + code).set(record).catch(() => {});
+}
+
+function copyFriendLink(friendId, friendName) {
+  const link = window.location.origin + window.location.pathname + '?addfriend=' + encodeURIComponent(friendId);
+  navigator.clipboard.writeText(link).then(() => alert('Friend request link copied for ' + friendName + '.')).catch(() => alert(link));
+}
+
+function handleIncomingFriendLink() {
+  const params = new URLSearchParams(window.location.search);
+  const friendId = params.get('addfriend');
+  if (!friendId || !currentUserId || friendId === currentUserId) return;
+  database.ref('users/' + friendId).once('value').then(snap => {
+    const u=snap.val()||{};
+    openFriendsModal('friends');
+    const input=document.getElementById('friendSearchInput');
+    if (input) input.value=u.username||'';
+    const out=document.getElementById('friendSearchResults');
+    if (out) out.innerHTML=`<div class="friend-row"><div><strong>${escapeHtml(u.username||'Player')}</strong><small>${Number(u.rating||800)} Elo</small></div><div class="friend-link-actions"><button class="pill-btn friend-request-btn" id="linkedFriendRequestBtn">➕ Send Request</button></div></div>`;
+    const btn=document.getElementById('linkedFriendRequestBtn');
+    if(btn) btn.addEventListener('click',()=>sendFriendRequest(friendId,u.username||'Player'));
+  });
+}
+
+function openFriendsModal(tab = 'friends') {
+  if (!currentUserId) return alert('Please Sign in with Google first!');
+  const modal = document.getElementById('friendsModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  switchFriendsTab(tab);
+  loadFriendsData();
+}
+
+function closeFriendsModal() {
+  const modal = document.getElementById('friendsModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function switchFriendsTab(tab) {
+  const map = { friends:['friendsPanel','friendsTabBtn'], requests:['requestsPanel','requestsTabBtn'], history:['historyPanel','historyTabBtn'] };
+  Object.entries(map).forEach(([key,[panel,btn]]) => {
+    const p=document.getElementById(panel), b=document.getElementById(btn);
+    if (p) p.style.display = key===tab ? 'block':'none';
+    if (b) b.classList.toggle('active', key===tab);
+  });
+  if (tab==='history') loadMatchHistory();
+  if (tab==='requests') loadFriendRequests();
+}
+
+function loadFriendsData() {
+  if (!currentUserId) return;
+  const list = document.getElementById('friendsList');
+  if (!list) return;
+  database.ref('users/'+currentUserId+'/friends').once('value').then(snap => {
+    const data=snap.val()||{}; const ids=Object.keys(data);
+    if (!ids.length) { list.innerHTML='<div class="friend-empty">No friends yet. Search a username above.</div>'; return; }
+    list.innerHTML=ids.map(id => {
+      const f=data[id]||{};
+      return `<div class="friend-row"><div><strong>${escapeHtml(f.username||'Player')}</strong><small>${Number(f.rating||800)} Elo</small></div><div><button class="pill-btn friend-challenge-btn" data-id="${id}" data-name="${escapeHtml(f.username||'Player')}">♟ Challenge</button></div></div>`;
+    }).join('');
+    list.querySelectorAll('.friend-challenge-btn').forEach(btn => btn.addEventListener('click',()=>sendChallenge(btn.dataset.id, btn.dataset.name)));
+  });
+}
+
+function searchFriendByUsername() {
+  const input=document.getElementById('friendSearchInput');
+  const out=document.getElementById('friendSearchResults');
+  const name=(input?.value||'').trim();
+  if (!name) return;
+  database.ref('users').orderByChild('username').equalTo(name).once('value').then(snap=>{
+    const data=snap.val()||{}; const ids=Object.keys(data).filter(id=>id!==currentUserId);
+    if (!ids.length) { out.innerHTML='<div class="friend-empty">User not found.</div>'; return; }
+    out.innerHTML=ids.map(id=>{const u=data[id]||{};return `<div class="friend-row"><div><strong>${escapeHtml(u.username||'Player')}</strong><small>${Number(u.rating||800)} Elo</small></div><div class="friend-link-actions"><button class="pill-btn friend-request-btn" data-id="${id}" data-name="${escapeHtml(u.username||'Player')}">➕ Add Friend</button><button class="pill-btn friend-copy-link-btn" data-id="${id}" data-name="${escapeHtml(u.username||'Player')}">🔗 Copy Link</button></div></div>`;}).join('');
+    out.querySelectorAll('.friend-request-btn').forEach(btn=>btn.addEventListener('click',()=>sendFriendRequest(btn.dataset.id,btn.dataset.name)));
+    out.querySelectorAll('.friend-copy-link-btn').forEach(btn=>btn.addEventListener('click',()=>copyFriendLink(btn.dataset.id,btn.dataset.name)));
+  }).catch(err=>{ out.innerHTML='<div class="friend-empty">Search is unavailable with the current database rules.</div>'; console.warn(err); });
+}
+
+function sendFriendRequest(friendId, friendName) {
+  if (!currentUserId || friendId===currentUserId) return;
+  const payload={fromId:currentUserId,fromName:currentUserName,fromRating:currentUserRating,toId:friendId,createdAt:firebase.database.ServerValue.TIMESTAMP};
+  const updates={};
+  updates['users/'+friendId+'/friendRequests/incoming/'+currentUserId]=payload;
+  updates['users/'+currentUserId+'/friendRequests/outgoing/'+friendId]={toId:friendId,toName:friendName,createdAt:firebase.database.ServerValue.TIMESTAMP};
+  database.ref().update(updates).then(()=>alert('Friend request sent to '+friendName+'.'));
+}
+
+function acceptFriendRequest(fromId, req) {
+  const now=firebase.database.ServerValue.TIMESTAMP;
+  const updates={};
+  updates['users/'+currentUserId+'/friends/'+fromId]={username:req.fromName||'Player',rating:req.fromRating||800};
+  updates['users/'+fromId+'/friends/'+currentUserId]={username:currentUserName,rating:currentUserRating};
+  updates['users/'+currentUserId+'/friendRequests/incoming/'+fromId]=null;
+  updates['users/'+fromId+'/friendRequests/outgoing/'+currentUserId]=null;
+  updates['users/'+currentUserId+'/friendsUpdatedAt']=now;
+  database.ref().update(updates).then(()=>loadFriendRequests());
+}
+
+function loadFriendRequests() {
+  if (!currentUserId) return;
+  const incoming=document.getElementById('incomingRequests'), outgoing=document.getElementById('outgoingRequests'), challenges=document.getElementById('incomingChallenges');
+  database.ref('users/'+currentUserId+'/friendRequests/incoming').once('value').then(s=>{
+    const d=s.val()||{}; const ids=Object.keys(d); incoming.innerHTML=ids.length?ids.map(id=>{const r=d[id];return `<div class="friend-row"><div><strong>${escapeHtml(r.fromName||'Player')}</strong><small>${Number(r.fromRating||800)} Elo</small></div><button class="pill-btn accept-request-btn" data-id="${id}">Accept</button></div>`}).join(''):'<div class="friend-empty">No incoming requests.</div>';
+    incoming.querySelectorAll('.accept-request-btn').forEach(btn=>btn.addEventListener('click',()=>acceptFriendRequest(btn.dataset.id,d[btn.dataset.id])));
+  });
+  database.ref('users/'+currentUserId+'/friendRequests/outgoing').once('value').then(s=>{const d=s.val()||{}; const ids=Object.keys(d); outgoing.innerHTML=ids.length?ids.map(id=>`<div class="friend-row"><div><strong>${escapeHtml(d[id].toName||'Player')}</strong><small>Request sent</small></div></div>`).join(''):'<div class="friend-empty">No sent requests.</div>';});
+  database.ref('users/'+currentUserId+'/challenges').once('value').then(s=>{const d=s.val()||{}; const ids=Object.keys(d); challenges.innerHTML=ids.length?ids.map(id=>{const c=d[id];return `<div class="friend-row"><div><strong>${escapeHtml(c.fromName||'Player')}</strong><small>${escapeHtml(c.timeLabel||'No Timer')}</small></div><button class="pill-btn accept-challenge-btn" data-code="${id}">Join</button></div>`}).join(''):'<div class="friend-empty">No challenges.</div>'; challenges.querySelectorAll('.accept-challenge-btn').forEach(btn=>btn.addEventListener('click',()=>{document.getElementById('roomCodeInput').value=btn.dataset.code;closeFriendsModal();joinFriendRoom();}));});
+}
+
+function sendChallenge(friendId, friendName) {
+  if (!currentUserId) return;
+  if (currentRoomCode) return alert('You are already in a game.');
+  showFriendTimeModal((seconds)=>{
+    createFriendRoomWithTime(seconds, friendId, friendName);
+  });
+}
+
+// Optional challenge metadata is stored on the opponent profile; room creation itself remains unchanged.
+function loadMatchHistory() {
+  const out=document.getElementById('matchHistoryList'); if(!out||!currentUserId)return;
+  database.ref('users/'+currentUserId+'/matchHistory').orderByChild('playedAt').limitToLast(50).once('value').then(s=>{
+    const d=s.val()||{}; const arr=Object.entries(d).map(([code,v])=>({code,...v})).sort((a,b)=>(b.playedAt||0)-(a.playedAt||0));
+    const wins=arr.filter(m=>m.result==='win').length, losses=arr.filter(m=>m.result==='loss').length, draws=arr.filter(m=>m.result==='draw').length;
+    out.innerHTML=(arr.length ? `<div class="history-summary"><strong>${wins} Wins</strong><span>${losses} Losses</span><span>${draws} Draws</span><span>${arr.length} Matches</span></div>`+arr.map(m=>`<div class="history-match-row"><div><strong>${escapeHtml(m.opponentName||'Player')}</strong><small>${escapeHtml(m.timeLabel||'No Timer')} • ${new Date(m.playedAt||Date.now()).toLocaleString()}</small></div><span class="history-result ${m.result}">${m.result.toUpperCase()}</span></div>`).join('') : '<div class="friend-empty">No friend matches yet.</div>');
+  });
+}
+
 function checkOnlineTrigger(move) {
   if (currentMode === 'friend' && currentRoomCode) {
     const clockUpdate = commitClockAfterMove(game.turn());
     database.ref("rooms/" + currentRoomCode).update({
       gameFen: game.fen(),
       lastMove: { from: move.from, to: move.to },
+      moveHistory: game.history(),
       ...(clockUpdate || {})
     });
 
@@ -1705,6 +1875,46 @@ function executeBotMove(uci) {
   }
 }
 
+// --- PAWN PROMOTION ---
+function isPromotionMove(source, target) {
+  const piece = game.get(source);
+  if (!piece || piece.type !== 'p') return false;
+  return (piece.color === 'w' && target[1] === '8') || (piece.color === 'b' && target[1] === '1');
+}
+
+function showPromotionModal(source, target, onChosen) {
+  const modal = document.getElementById('promotionModal');
+  if (!modal) return onChosen('q');
+  pendingPromotionMove = { source, target, onChosen };
+  modal.style.display = 'flex';
+}
+
+function closePromotionModal() {
+  const modal = document.getElementById('promotionModal');
+  if (modal) modal.style.display = 'none';
+  pendingPromotionMove = null;
+}
+
+function finishPromotionChoice(piece) {
+  const pending = pendingPromotionMove;
+  closePromotionModal();
+  if (pending && typeof pending.onChosen === 'function') pending.onChosen(piece);
+}
+
+function applyHumanMove(source, target, promotion = 'q') {
+  const beforeEval = currentPositionCp;
+  const move = game.move({ from: source, to: target, promotion });
+  if (!move) return false;
+  redoStack = [];
+  board.position(game.fen());
+  recordMoveQuality(move, beforeEval);
+  handleMoveEffects(move);
+  updateUI();
+  checkBotTrigger();
+  checkOnlineTrigger(move);
+  return true;
+}
+
 // Drag & Drop Handlers
 function onDragStart(source, piece) {
   if (game.game_over()) return false;
@@ -1748,21 +1958,12 @@ function onDrop(source, target) {
   clearClickHighlights();
   selectedSquare = null;
 
-  const beforeEval = currentPositionCp;
-  const move = game.move({
-    from: source,
-    to: target,
-    promotion: 'q'
-  });
+  if (isPromotionMove(source, target)) {
+    showPromotionModal(source, target, (promotion) => applyHumanMove(source, target, promotion));
+    return 'snapback';
+  }
 
-  if (move === null) return 'snapback';
-
-  redoStack = [];
-  recordMoveQuality(move, beforeEval);
-  handleMoveEffects(move);
-  updateUI();
-  checkBotTrigger();
-  checkOnlineTrigger(move);
+  return applyHumanMove(source, target) ? undefined : 'snapback';
 }
 
 function onSnapEnd() {
@@ -1787,26 +1988,16 @@ function handleSquareClick(square) {
       return;
     }
 
-    const beforeEval = currentPositionCp;
-    const move = game.move({
-      from: selectedSquare,
-      to: square,
-      promotion: 'q'
-    });
-
+    const source = selectedSquare;
     clearClickHighlights();
     selectedSquare = null;
 
-    if (move) {
-      redoStack = [];
-      board.position(game.fen());
-      recordMoveQuality(move, beforeEval);
-      handleMoveEffects(move);
-      updateUI();
-      checkBotTrigger();
-      checkOnlineTrigger(move);
+    if (isPromotionMove(source, square)) {
+      showPromotionModal(source, square, (promotion) => applyHumanMove(source, square, promotion));
       return;
     }
+
+    if (applyHumanMove(source, square)) return;
   }
 
   const piece = game.get(square);
@@ -1833,6 +2024,35 @@ function recordMoveQuality(move, beforeEval) {
   pendingEvalMoveIndex = newIndex;
 }
 
+function clearKingStateEffects() {
+  document.querySelectorAll('#myBoard .king-in-check, #myBoard .king-checkmate-fall').forEach(el => {
+    el.classList.remove('king-in-check', 'king-checkmate-fall');
+  });
+}
+
+function showKingStateEffects() {
+  clearKingStateEffects();
+  const kingColor = game.turn();
+  const kingSquare = game.board().reduce((found, row, r) => {
+    if (found) return found;
+    for (let c = 0; c < row.length; c++) {
+      const p = row[c];
+      if (p && p.type === 'k' && p.color === kingColor) {
+        return String.fromCharCode(97 + c) + (8 - r);
+      }
+    }
+    return null;
+  }, null);
+  if (!kingSquare) return;
+  const squareEl = document.querySelector(`#myBoard .square-${kingSquare}`);
+  if (!squareEl) return;
+  if (game.in_checkmate()) {
+    squareEl.classList.add('king-checkmate-fall');
+  } else if (game.in_check()) {
+    squareEl.classList.add('king-in-check');
+  }
+}
+
 function handleMoveEffects(move) {
   if (game.in_checkmate()) {
     playSound('checkmate');
@@ -1843,6 +2063,7 @@ function handleMoveEffects(move) {
   } else {
     playSound('move');
   }
+  setTimeout(showKingStateEffects, 30);
 }
 
 // Captured Pieces Tracking & Material Score Calculation
@@ -1926,11 +2147,11 @@ function updateCapturedPiecesDisplay() {
 
   // Render HTML icons for captured pieces
   document.getElementById('topCapturedPieces').innerHTML = topList.map(p =>
-    `<img src="${PIECE_IMAGES[p.color][p.type]}" class="captured-img" alt="${p.type}" />`
+    `<img src="${PIECE_IMAGES[p.color][p.type]}" class="captured-img captured-${p.color}" alt="${p.type}" />`
   ).join('');
 
   document.getElementById('bottomCapturedPieces').innerHTML = bottomList.map(p =>
-    `<img src="${PIECE_IMAGES[p.color][p.type]}" class="captured-img" alt="${p.type}" />`
+    `<img src="${PIECE_IMAGES[p.color][p.type]}" class="captured-img captured-${p.color}" alt="${p.type}" />`
   ).join('');
 
   // Material Advantage badges (+1, +3, etc.)
@@ -2514,6 +2735,32 @@ $(document).ready(function() {
       const targetId = tabBtn.getAttribute('data-tab');
       document.getElementById(targetId).classList.add('active-content');
     });
+  });
+
+  // Pawn promotion selection
+  document.querySelectorAll('.promotion-choice').forEach(btn => btn.addEventListener('click', () => finishPromotionChoice(btn.dataset.promotion)));
+  const cancelPromotionBtn = document.getElementById('cancelPromotionBtn');
+  if (cancelPromotionBtn) cancelPromotionBtn.addEventListener('click', closePromotionModal);
+
+  // Friends / requests / match history
+  const friendsBtn = document.getElementById('friendsBtn');
+  if (friendsBtn) friendsBtn.addEventListener('click', () => openFriendsModal('friends'));
+  const historyBtn = document.getElementById('matchHistoryBtn');
+  if (historyBtn) historyBtn.addEventListener('click', () => openFriendsModal('history'));
+  const closeFriendsBtn = document.getElementById('closeFriendsModalBtn');
+  if (closeFriendsBtn) closeFriendsBtn.addEventListener('click', closeFriendsModal);
+  const searchFriendBtn = document.getElementById('friendSearchBtn');
+  if (searchFriendBtn) searchFriendBtn.addEventListener('click', searchFriendByUsername);
+  const searchFriendInput = document.getElementById('friendSearchInput');
+  if (searchFriendInput) searchFriendInput.addEventListener('keydown', e => { if (e.key === 'Enter') searchFriendByUsername(); });
+  const ftab = document.getElementById('friendsTabBtn'); if (ftab) ftab.addEventListener('click',()=>switchFriendsTab('friends'));
+  const rtab = document.getElementById('requestsTabBtn'); if (rtab) rtab.addEventListener('click',()=>switchFriendsTab('requests'));
+  const htab = document.getElementById('historyTabBtn'); if (htab) htab.addEventListener('click',()=>switchFriendsTab('history'));
+
+  const copyMovesBtn = document.getElementById('copyMovesBtn');
+  if (copyMovesBtn) copyMovesBtn.addEventListener('click', () => {
+    const pgn = game.pgn() || 'No moves yet';
+    navigator.clipboard.writeText(pgn).then(() => alert('Moves copied.')).catch(() => alert('Could not copy moves.'));
   });
 
   // Depth Slider
