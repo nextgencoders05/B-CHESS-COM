@@ -26,6 +26,13 @@
         <button id="googleLoginBtn" class="pill-btn google-login-pill">
           <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" class="google-icon" /> Sign in with Google
         </button>
+        <div class="challenge-notification-wrap" id="challengeNotificationWrap" style="display:none;">
+          <button id="challengeNotificationBtn" class="pill-btn notification-btn" title="Challenges">♟<span id="challengeBadge" class="challenge-badge" style="display:none;">0</span></button>
+          <div id="challengeNotificationBox" class="challenge-notification-box" style="display:none;">
+            <div class="challenge-notification-title">Challenge Notifications</div>
+            <div id="challengeNotificationList" class="challenge-notification-list"></div>
+          </div>
+        </div>
         <div id="userProfile" class="user-profile-widget" style="display: none;">
           <img id="userAvatarImg" class="user-avatar-img" src="" alt="Profile" style="display:none;" />
           <span id="userAvatarFallback" class="user-avatar-dot">P</span>
@@ -156,6 +163,7 @@
           <button id="playBestBtn" class="control-btn highlight-btn">⚡ Play Best</button>
           <button id="resetBtn" class="control-btn active-outline">↺ Reset</button>
         </div>
+        <div id="friendMatchResultPanel" class="friend-match-result-panel" style="display:none;"></div>
       </section>
 
       <!-- Right: Analysis Panel -->
@@ -401,8 +409,7 @@
         <div id="incomingRequests" class="friend-list"></div>
         <div class="friend-section-title">Sent Requests</div>
         <div id="outgoingRequests" class="friend-list"></div>
-        <div class="friend-section-title">Challenges</div>
-        <div id="incomingChallenges" class="friend-list"></div>
+
       </div>
       <div id="historyPanel" style="display:none;">
         <div id="matchHistoryList" class="friend-list"></div>

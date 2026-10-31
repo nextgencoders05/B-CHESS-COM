@@ -40,6 +40,10 @@ let friendChatListenerRef = null;
 let friendHistorySavedCodes = new Set();
 let pendingPromotionMove = null;
 let friendProfileListeners = [];
+let friendRoomData = null;
+let challengeListenerRef = null;
+let challengeNotificationMap = {};
+let friendResultData = null;
 
 // WebRTC Live Voice Chat State
 let peerConnection = null;
@@ -163,12 +167,15 @@ auth.onAuthStateChanged(async (user) => {
     const userProfile = document.getElementById("userProfile");
     if (loginBtn) loginBtn.style.display = "none";
     if (userProfile) userProfile.style.display = "inline-flex";
+    const challengeWrap = document.getElementById('challengeNotificationWrap');
+    if (challengeWrap) challengeWrap.style.display = 'inline-block';
 
     const snap = await database.ref("users/" + user.uid).once("value");
     const data = snap.val() || {};
     currentUserName = data.username || data.name || user.displayName || "Player";
     currentUserPhoto = data.photoData || user.photoURL || "";
     updateProfileUI();
+    startChallengeNotifications();
     setTimeout(handleIncomingFriendLink, 250);
 
     // After Google sign-in, require Terms & Conditions acceptance once per terms version.
@@ -187,6 +194,8 @@ auth.onAuthStateChanged(async (user) => {
       if (ratingDisplay) ratingDisplay.textContent = currentUserRating;
     }
   } else {
+    if (challengeListenerRef) { challengeListenerRef.off(); challengeListenerRef = null; }
+    challengeNotificationMap = {};
     currentUserId = null;
     currentUserName = "Player";
     currentUserPhoto = "";
@@ -194,6 +203,10 @@ auth.onAuthStateChanged(async (user) => {
     const userProfile = document.getElementById("userProfile");
     if (loginBtn) loginBtn.style.display = "inline-flex";
     if (userProfile) userProfile.style.display = "none";
+    const challengeWrap = document.getElementById('challengeNotificationWrap');
+    if (challengeWrap) challengeWrap.style.display = 'none';
+    const challengeBox = document.getElementById('challengeNotificationBox');
+    if (challengeBox) challengeBox.style.display = 'none';
   }
 });
 
@@ -347,6 +360,7 @@ function createFriendRoomWithTime(timeSeconds, challengeFriendId = null, challen
   currentRoomCode = code;
   myOnlineColor = 'w';
   friendTimeControl = Number(timeSeconds) || 0;
+  friendRoomData = { creatorId: currentUserId, creatorName: currentUserName, creatorRating: currentUserRating, creatorPhoto: currentUserPhoto || '', guestId: challengeFriendId || null, guestName: challengeFriendName || null, guestRating: null, guestPhoto: '' };
   board.orientation('white');
   game.reset();
   board.start();
@@ -373,7 +387,7 @@ function createFriendRoomWithTime(timeSeconds, challengeFriendId = null, challen
     listenToRoom(code, true);
     startVoiceChat(code, true);
     if (challengeFriendId) {
-      database.ref('users/' + challengeFriendId + '/challenges/' + code).set({fromId: currentUserId, fromName: currentUserName, timeLabel: friendTimeLabel(friendTimeControl), createdAt: firebase.database.ServerValue.TIMESTAMP});
+      database.ref('users/' + challengeFriendId + '/challenges/' + code).set({fromId: currentUserId, fromName: currentUserName, fromRating: currentUserRating, fromPhoto: currentUserPhoto || '', timeControl: friendTimeControl, timeLabel: friendTimeLabel(friendTimeControl), createdAt: firebase.database.ServerValue.TIMESTAMP});
     }
   });
 }
@@ -397,6 +411,7 @@ function joinFriendRoom() {
     currentRoomCode = code;
     myOnlineColor = 'b';
     friendTimeControl = Number(val.timeControl) || 0;
+    friendRoomData = val;
     board.orientation('black');
     lockModeButtons(true);
     resetFriendClockUI();
@@ -408,6 +423,7 @@ function joinFriendRoom() {
       status: 'playing',
       gameOver: false
     }).then(() => {
+      friendRoomData = Object.assign({}, val, { guestId: currentUserId, guestName: currentUserName, guestRating: currentUserRating, guestPhoto: currentUserPhoto || '', status: 'playing' });
       document.getElementById("activeRoomInfo").style.display = "flex";
       document.getElementById("activeRoomCode").textContent = code;
       updateTimeControlUI();
@@ -590,6 +606,8 @@ function listenToRoom(code, isCreator) {
   roomRef.on("value", (snap) => {
     const val = snap.val();
     if (!val) return;
+    friendRoomData = val;
+    updateFriendPlayerLabels(val);
 
     if (val.guestName) {
       if (friendTimeControl > 0 && !val.clockStartedAt && !val.gameOver) {
@@ -647,26 +665,144 @@ function listenToRoom(code, isCreator) {
       saveFriendMatchHistory(val, code);
       stopFriendClock();
       lockModeButtons(false);
-      if (val.result === 'left') {
-        if (val.leftBy !== currentUserId) alert('Opponent left the game.');
-        cleanupFriendGame(true);
-        return;
-      } else if (val.result === 'timeout') {
-        const iWon = val.winner === currentUserId;
-        alert(iWon ? 'Opponent ran out of time! You won.' : 'Time is over. Opponent won.');
-      } else if (val.result === 'resigned') {
-        const iWon = val.winner === currentUserId;
-        alert(iWon ? "Opponent resigned! You won (+8 Rating)!" : "You resigned (-8 Rating).");
-      } else if (val.result === 'draw') {
-        alert("The game ended in a draw.");
-      } else if (val.result === 'checkmate') {
-        const iWon = val.winner === currentUserId;
-        alert(iWon ? "Checkmate! You won (+8 Rating)!" : "Checkmate! Opponent won (-8 Rating).");
-      }
+      showFriendMatchResult(val, code);
     }
   });
 
   listenForChat(code);
+}
+
+function updateFriendPlayerLabels(roomValue) {
+  if (!roomValue) return;
+  const white = { name: roomValue.creatorName || 'White', rating: Number(roomValue.creatorRating || 800) };
+  const black = { name: roomValue.guestName || 'Waiting...', rating: Number(roomValue.guestRating || 800) };
+  const topIsWhite = board.orientation() === 'black';
+  const top = topIsWhite ? white : black;
+  const bottom = topIsWhite ? black : white;
+  const topEl = document.getElementById('topPlayerName');
+  const bottomEl = document.getElementById('bottomPlayerName');
+  if (currentMode === 'friend' && currentRoomCode) {
+    if (topEl) topEl.textContent = `${top.name} • ${top.rating}`;
+    if (bottomEl) bottomEl.textContent = `${bottom.name} • ${bottom.rating}`;
+  }
+}
+
+function getLocalMatchStats() {
+  const stats = { blunders: 0, mistakes: 0, excellent: 0, good: 0, inaccuracies: 0, accuracy: 0, analyzed: 0 };
+  let totalLoss = 0;
+  moveQualityHistory.forEach(m => {
+    if (m.color !== myOnlineColor || m.quality === '...') return;
+    stats.analyzed++;
+    if (m.quality === 'blunder') stats.blunders++;
+    else if (m.quality === 'mistake') stats.mistakes++;
+    else if (m.quality === 'best') stats.excellent++;
+    else if (m.quality === 'good') stats.good++;
+    else if (m.quality === 'inaccuracy') stats.inaccuracies++;
+    totalLoss += Number(m.loss || 0);
+  });
+  if (stats.analyzed) {
+    stats.accuracy = Math.max(30, Math.min(99, Math.round(100 * Math.exp(-0.0055 * (totalLoss / stats.analyzed)))));
+  }
+  return stats;
+}
+
+function showFriendMatchResult(roomValue, code) {
+  if (!roomValue || !currentUserId) return;
+  const white = { id: roomValue.creatorId, name: roomValue.creatorName || 'White', rating: Number(roomValue.creatorRating || 800) };
+  const black = { id: roomValue.guestId, name: roomValue.guestName || 'Black', rating: Number(roomValue.guestRating || 800) };
+  const winnerId = roomValue.winner || null;
+  const isDraw = roomValue.result === 'draw';
+  const winner = winnerId === white.id ? white : winnerId === black.id ? black : null;
+  const loser = winnerId === white.id ? black : winnerId === black.id ? white : null;
+  const me = currentUserId === white.id ? white : black;
+  const opponent = currentUserId === white.id ? black : white;
+  const stats = getLocalMatchStats();
+  friendResultData = { roomValue, code, opponentId: opponent.id, opponentName: opponent.name, timeControl: Number(roomValue.timeControl || 0) };
+
+  const panel = document.getElementById('friendMatchResultPanel');
+  if (!panel) return;
+  const resultTitle = isDraw ? 'DRAW' : (winnerId === currentUserId ? 'YOU WON' : 'YOU LOST');
+  const resultSub = isDraw ? 'The game ended in a draw.' : `${winner.name} defeated ${loser.name}`;
+  const resultClass = isDraw ? 'draw' : (winnerId === currentUserId ? 'win' : 'loss');
+  panel.innerHTML = `
+    <div class="friend-result-card ${resultClass}">
+      <div class="friend-result-kicker">${escapeHtml(friendTimeLabel(roomValue.timeControl))}</div>
+      <div class="friend-result-title">${resultTitle}</div>
+      <div class="friend-result-sub">${escapeHtml(resultSub)}</div>
+      <div class="friend-result-players">
+        <div class="result-player ${me.id===white.id?'active-me':''}"><span class="result-side">WHITE</span><strong>${escapeHtml(white.name)}</strong><small>${white.rating} Elo</small></div>
+        <div class="result-vs">VS</div>
+        <div class="result-player ${me.id===black.id?'active-me':''}"><span class="result-side">BLACK</span><strong>${escapeHtml(black.name)}</strong><small>${black.rating} Elo</small></div>
+      </div>
+      <div class="result-stat-grid">
+        <div><strong>${stats.blunders}</strong><span>Blunders</span></div>
+        <div><strong>${stats.mistakes}</strong><span>Mistakes</span></div>
+        <div><strong>${stats.excellent}</strong><span>Excellent</span></div>
+        <div><strong>${stats.inaccuracies}</strong><span>Inaccuracies</span></div>
+        <div><strong>${stats.accuracy || '--'}${stats.accuracy ? '%' : ''}</strong><span>Accuracy</span></div>
+      </div>
+      <div class="friend-result-actions">
+        <button id="resultReviewBtn" class="pill-btn highlight-btn">📊 View Analysis</button>
+        <button id="resultRematchBtn" class="pill-btn">♟ Rematch</button>
+        <button id="resultFriendsBtn" class="pill-btn">👥 Friends</button>
+      </div>
+    </div>`;
+  panel.style.display = 'flex';
+  const reviewBtn = document.getElementById('resultReviewBtn');
+  const rematchBtn = document.getElementById('resultRematchBtn');
+  const friendsBtn = document.getElementById('resultFriendsBtn');
+  if (reviewBtn) reviewBtn.onclick = () => { panel.style.display='none'; document.querySelector('[data-tab="reviewTab"]')?.click(); };
+  if (rematchBtn) rematchBtn.onclick = () => { panel.style.display='none'; cleanupFriendGame(true); if (friendResultData.opponentId) sendChallenge(friendResultData.opponentId, friendResultData.opponentName, friendResultData.timeControl); };
+  if (friendsBtn) friendsBtn.onclick = () => { panel.style.display='none'; cleanupFriendGame(true); openFriendsModal('friends'); };
+}
+
+function closeFriendMatchResult() {
+  const panel = document.getElementById('friendMatchResultPanel');
+  if (panel) panel.style.display = 'none';
+}
+
+function startChallengeNotifications() {
+  if (!currentUserId) return;
+  if (challengeListenerRef) challengeListenerRef.off();
+  challengeListenerRef = database.ref('users/' + currentUserId + '/challenges');
+  challengeListenerRef.on('value', snap => {
+    challengeNotificationMap = snap.val() || {};
+    renderChallengeNotifications();
+  });
+}
+
+function renderChallengeNotifications() {
+  const list = document.getElementById('challengeNotificationList');
+  const badge = document.getElementById('challengeBadge');
+  const ids = Object.keys(challengeNotificationMap || {});
+  if (badge) { badge.textContent = ids.length; badge.style.display = ids.length ? 'inline-flex' : 'none'; }
+  if (!list) return;
+  list.innerHTML = ids.length ? ids.map(code => {
+    const c = challengeNotificationMap[code] || {};
+    const avatar = c.fromPhoto ? `<img src="${escapeHtml(c.fromPhoto)}" alt="" class="challenge-avatar">` : `<span class="challenge-avatar-fallback">${escapeHtml((c.fromName||'P').charAt(0).toUpperCase())}</span>`;
+    return `<div class="challenge-notification-row"><div class="challenge-profile">${avatar}<div><strong>${escapeHtml(c.fromName||'Player')}</strong><small>${Number(c.fromRating||800)} Elo • ${escapeHtml(c.timeLabel||friendTimeLabel(c.timeControl))}</small></div></div><div class="challenge-actions"><button class="challenge-accept-btn" data-code="${escapeHtml(code)}">✓</button><button class="challenge-decline-btn" data-code="${escapeHtml(code)}">×</button></div></div>`;
+  }).join('') : '<div class="friend-empty">No new challenges.</div>';
+  list.querySelectorAll('.challenge-accept-btn').forEach(btn => btn.onclick = () => acceptChallengeNotification(btn.dataset.code));
+  list.querySelectorAll('.challenge-decline-btn').forEach(btn => btn.onclick = () => declineChallengeNotification(btn.dataset.code));
+}
+
+function openChallengeNotifications() {
+  const box = document.getElementById('challengeNotificationBox');
+  if (box) { box.style.display = box.style.display === 'block' ? 'none' : 'block'; renderChallengeNotifications(); }
+}
+
+function acceptChallengeNotification(code) {
+  const challenge = challengeNotificationMap[code];
+  if (!challenge) return;
+  if (currentRoomCode) return alert('You are already in a game.');
+  database.ref('users/' + currentUserId + '/challenges/' + code).remove();
+  document.getElementById('challengeNotificationBox').style.display = 'none';
+  document.getElementById('roomCodeInput').value = code;
+  joinFriendRoom();
+}
+
+function declineChallengeNotification(code) {
+  database.ref('users/' + currentUserId + '/challenges/' + code).remove();
 }
 
 function friendTimeLabel(seconds) {
@@ -794,18 +930,22 @@ function acceptFriendRequest(fromId, req) {
 
 function loadFriendRequests() {
   if (!currentUserId) return;
-  const incoming=document.getElementById('incomingRequests'), outgoing=document.getElementById('outgoingRequests'), challenges=document.getElementById('incomingChallenges');
+  const incoming=document.getElementById('incomingRequests'), outgoing=document.getElementById('outgoingRequests');
   database.ref('users/'+currentUserId+'/friendRequests/incoming').once('value').then(s=>{
-    const d=s.val()||{}; const ids=Object.keys(d); incoming.innerHTML=ids.length?ids.map(id=>{const r=d[id];return `<div class="friend-row"><div><strong>${escapeHtml(r.fromName||'Player')}</strong><small>${Number(r.fromRating||800)} Elo</small></div><button class="pill-btn accept-request-btn" data-id="${id}">Accept</button></div>`}).join(''):'<div class="friend-empty">No incoming requests.</div>';
+    const d=s.val()||{}; const ids=Object.keys(d);
+    incoming.innerHTML=ids.length?ids.map(id=>{const r=d[id];return `<div class="friend-row"><div><strong>${escapeHtml(r.fromName||'Player')}</strong><small>${Number(r.fromRating||800)} Elo</small></div><button class="pill-btn accept-request-btn" data-id="${id}">Accept</button></div>`}).join(''):'<div class="friend-empty">No incoming requests.</div>';
     incoming.querySelectorAll('.accept-request-btn').forEach(btn=>btn.addEventListener('click',()=>acceptFriendRequest(btn.dataset.id,d[btn.dataset.id])));
   });
   database.ref('users/'+currentUserId+'/friendRequests/outgoing').once('value').then(s=>{const d=s.val()||{}; const ids=Object.keys(d); outgoing.innerHTML=ids.length?ids.map(id=>`<div class="friend-row"><div><strong>${escapeHtml(d[id].toName||'Player')}</strong><small>Request sent</small></div></div>`).join(''):'<div class="friend-empty">No sent requests.</div>';});
-  database.ref('users/'+currentUserId+'/challenges').once('value').then(s=>{const d=s.val()||{}; const ids=Object.keys(d); challenges.innerHTML=ids.length?ids.map(id=>{const c=d[id];return `<div class="friend-row"><div><strong>${escapeHtml(c.fromName||'Player')}</strong><small>${escapeHtml(c.timeLabel||'No Timer')}</small></div><button class="pill-btn accept-challenge-btn" data-code="${id}">Join</button></div>`}).join(''):'<div class="friend-empty">No challenges.</div>'; challenges.querySelectorAll('.accept-challenge-btn').forEach(btn=>btn.addEventListener('click',()=>{document.getElementById('roomCodeInput').value=btn.dataset.code;closeFriendsModal();joinFriendRoom();}));});
 }
 
-function sendChallenge(friendId, friendName) {
+function sendChallenge(friendId, friendName, presetTime = null) {
   if (!currentUserId) return;
   if (currentRoomCode) return alert('You are already in a game.');
+  if (presetTime !== null && presetTime !== undefined) {
+    createFriendRoomWithTime(Number(presetTime) || 0, friendId, friendName);
+    return;
+  }
   showFriendTimeModal((seconds)=>{
     createFriendRoomWithTime(seconds, friendId, friendName);
   });
@@ -2743,6 +2883,9 @@ $(document).ready(function() {
   if (cancelPromotionBtn) cancelPromotionBtn.addEventListener('click', closePromotionModal);
 
   // Friends / requests / match history
+  const challengeNotificationBtn = document.getElementById('challengeNotificationBtn');
+  if (challengeNotificationBtn) challengeNotificationBtn.addEventListener('click', openChallengeNotifications);
+
   const friendsBtn = document.getElementById('friendsBtn');
   if (friendsBtn) friendsBtn.addEventListener('click', () => openFriendsModal('friends'));
   const historyBtn = document.getElementById('matchHistoryBtn');

@@ -1361,3 +1361,51 @@ body.wood-theme .black-3c85d {
 .history-summary span, .history-summary strong { background:#0b171b; border:1px solid #263840; border-radius:6px; padding:5px 8px; font-size:10px; color:#cbd5e1; }
 .history-summary strong { color:#86efac; border-color:#166534; }
 .friend-link-actions { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
+
+
+/* --- Challenge notifications + chess.com-style friend match result --- */
+.challenge-notification-wrap { position:relative; margin-right:6px; vertical-align:middle; }
+.notification-btn { position:relative; min-width:42px; padding:7px 10px; }
+.challenge-badge { position:absolute; top:-6px; right:-5px; min-width:18px; height:18px; padding:0 4px; border-radius:999px; background:#ef4444; color:#fff; border:2px solid #071014; display:inline-flex; align-items:center; justify-content:center; font-size:9px; font-weight:900; }
+.challenge-notification-box { position:absolute; top:calc(100% + 9px); right:0; width:330px; max-width:calc(100vw - 24px); background:#091317; border:1px solid #263840; border-radius:12px; box-shadow:0 18px 45px rgba(0,0,0,.45); z-index:3000; overflow:hidden; }
+.challenge-notification-title { padding:11px 13px; border-bottom:1px solid #263840; color:#f8fafc; font-size:12px; font-weight:900; }
+.challenge-notification-list { padding:7px; display:flex; flex-direction:column; gap:6px; max-height:330px; overflow:auto; }
+.challenge-notification-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:9px; background:#0b171b; border:1px solid #263840; border-radius:9px; }
+.challenge-profile { display:flex; align-items:center; gap:8px; min-width:0; }
+.challenge-profile strong { display:block; color:#f8fafc; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px; }
+.challenge-profile small { display:block; color:#94a3b8; font-size:10px; margin-top:2px; }
+.challenge-avatar, .challenge-avatar-fallback { width:34px; height:34px; flex:0 0 34px; border-radius:50%; object-fit:cover; border:1px solid #334155; }
+.challenge-avatar-fallback { display:inline-flex; align-items:center; justify-content:center; background:#16242a; color:#e2e8f0; font-weight:900; }
+.challenge-actions { display:flex; gap:5px; }
+.challenge-actions button { width:32px; height:32px; border-radius:8px; border:1px solid #334155; cursor:pointer; font-size:16px; font-weight:900; }
+.challenge-accept-btn { background:#14532d; color:#86efac; border-color:#166534 !important; }
+.challenge-decline-btn { background:#3f1616; color:#fca5a5; border-color:#7f1d1d !important; }
+
+.board-card { position:relative; }
+.friend-match-result-panel { position:absolute; z-index:1500; left:8%; right:8%; top:17%; min-height:58%; padding:16px; align-items:center; justify-content:center; background:rgba(3,10,13,.88); backdrop-filter:blur(8px); border:1px solid rgba(56,189,248,.22); border-radius:14px; box-shadow:0 25px 70px rgba(0,0,0,.55); }
+.friend-result-card { width:min(620px,100%); text-align:center; }
+.friend-result-kicker { color:#94a3b8; font-size:10px; font-weight:900; letter-spacing:1px; text-transform:uppercase; }
+.friend-result-title { margin-top:5px; font-size:34px; line-height:1.05; font-weight:1000; letter-spacing:1px; color:#f8fafc; }
+.friend-result-card.win .friend-result-title { color:#86efac; }
+.friend-result-card.loss .friend-result-title { color:#fca5a5; }
+.friend-result-card.draw .friend-result-title { color:#fde68a; }
+.friend-result-sub { margin-top:6px; color:#cbd5e1; font-size:12px; }
+.friend-result-players { display:grid; grid-template-columns:1fr 50px 1fr; align-items:center; gap:8px; margin:17px 0 13px; }
+.result-player { background:#0b171b; border:1px solid #263840; border-radius:10px; padding:10px 7px; }
+.result-player.active-me { border-color:#38bdf8; box-shadow:0 0 14px rgba(56,189,248,.12); }
+.result-player .result-side { display:block; color:#94a3b8; font-size:8px; font-weight:900; letter-spacing:.8px; }
+.result-player strong { display:block; color:#f8fafc; font-size:13px; margin-top:3px; }
+.result-player small { display:block; color:#94a3b8; font-size:10px; margin-top:2px; }
+.result-vs { color:#64748b; font-size:10px; font-weight:900; }
+.result-stat-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; }
+.result-stat-grid > div { background:#0b171b; border:1px solid #263840; border-radius:8px; padding:8px 4px; }
+.result-stat-grid strong { display:block; color:#f8fafc; font-size:17px; }
+.result-stat-grid span { display:block; color:#94a3b8; font-size:8px; margin-top:2px; text-transform:uppercase; letter-spacing:.35px; }
+.friend-result-actions { display:flex; justify-content:center; gap:7px; flex-wrap:wrap; margin-top:15px; }
+@media (max-width:700px) {
+  .challenge-notification-box { right:-55px; }
+  .friend-match-result-panel { left:3%; right:3%; top:8%; min-height:68%; padding:10px; }
+  .friend-result-title { font-size:28px; }
+  .friend-result-players { grid-template-columns:1fr 28px 1fr; }
+  .result-stat-grid { grid-template-columns:repeat(3,1fr); }
+}
