@@ -781,6 +781,7 @@ function showFriendMatchResult(roomValue, code) {
   const resultSub = isDraw ? 'The game ended in a draw.' : `${winner.name} defeated ${loser.name}`;
   const resultClass = isDraw ? 'draw' : (winnerId === currentUserId ? 'win' : 'loss');
   panel.innerHTML = `
+    <button type="button" id="resultCloseBtn" class="result-close-btn" title="Close" aria-label="Close result">✕</button>
     <div class="friend-result-card ${resultClass}">
       <div class="friend-result-kicker">${escapeHtml(friendTimeLabel(roomValue.timeControl))}</div>
       <div class="friend-result-title">${resultTitle}</div>
@@ -807,9 +808,28 @@ function showFriendMatchResult(roomValue, code) {
   const reviewBtn = document.getElementById('resultReviewBtn');
   const rematchBtn = document.getElementById('resultRematchBtn');
   const friendsBtn = document.getElementById('resultFriendsBtn');
+  const closeResultBtn = document.getElementById('resultCloseBtn');
+  if (closeResultBtn) closeResultBtn.onclick = closeResultAndExitRoom;
   if (reviewBtn) reviewBtn.onclick = () => { panel.style.display='none'; document.querySelector('[data-tab="reviewTab"]')?.click(); };
   if (rematchBtn) rematchBtn.onclick = () => { panel.style.display='none'; cleanupFriendGame(true); if (friendResultData.opponentId) sendChallenge(friendResultData.opponentId, friendResultData.opponentName, friendResultData.timeControl); };
   if (friendsBtn) friendsBtn.onclick = () => { panel.style.display='none'; cleanupFriendGame(true); openFriendsModal('friends'); };
+}
+
+// X on the Winner/Loser screen: close it and leave only this room (history is already saved; the room is not deleted).
+function closeResultAndExitRoom() {
+  const panel = document.getElementById('friendMatchResultPanel');
+  if (panel) panel.style.display = 'none';
+  friendResultData = null;
+  cleanupFriendGame(true);
+  game.reset();
+  redoStack = [];
+  moveQualityHistory = [];
+  clearClickHighlights();
+  selectedSquare = null;
+  board.orientation('white');
+  board.start();
+  updateGameReview();
+  updateUI();
 }
 
 function closeFriendMatchResult() {
@@ -3248,10 +3268,20 @@ function openReviewInAnalysis() {
 // Add your content later by pushing objects into these arrays, e.g.:
 //   BOOKS_DATA.openings.push({ title: 'Book title', author: 'Author', description: '...', link: 'https://...' });
 const BOOKS_DATA = {
-  openings: [],
-  defences: [],
+  openings: (typeof CHESS_OPENINGS_TOP50 !== 'undefined') ? CHESS_OPENINGS_TOP50 : [],
+  defences: (typeof CHESS_DEFENCES_TOP50 !== 'undefined') ? CHESS_DEFENCES_TOP50 : [],
   other: []
 };
+
+function formatMovesNumbered(movesStr) {
+  const sans = String(movesStr || '').split(/\s+/).filter(Boolean);
+  let out = '';
+  sans.forEach((san, i) => {
+    if (i % 2 === 0) out += `<span class="bk-num">${i / 2 + 1}.</span>`;
+    out += `<span class="bk-mv">${textEsc(san)}</span>`;
+  });
+  return out;
+}
 
 function renderBooksPanels() {
   const map = { openings: 'booksPanelOpenings', defences: 'booksPanelDefences', other: 'booksPanelOther' };
@@ -3260,6 +3290,28 @@ function renderBooksPanels() {
     const el = document.getElementById(map[cat]);
     if (!el) return;
     const items = BOOKS_DATA[cat] || [];
+    if (items.length && items[0].moves) {
+      el.innerHTML = `<input type="text" class="profile-input books-filter" data-books-filter="${cat}" placeholder="Search ${titles[cat].toLowerCase()}..." autocomplete="off" />
+        <div class="books-count">${items.length} ${titles[cat].toLowerCase()}</div>` +
+        items.map((b, i) => `<div class="book-opening-card" data-title="${attrEsc((b.title || '').toLowerCase())}">
+          <div class="book-opening-head"><span class="book-opening-num">${i + 1}</span><strong>${textEsc(b.title)}</strong>
+            <button type="button" class="pill-btn highlight-btn review-analysis-btn" data-cat="${cat}" data-idx="${i}">Review Analysis</button></div>
+          <div class="book-opening-moves">${formatMovesNumbered(b.moves)}</div></div>`).join('') +
+        `<div class="books-empty books-no-match" style="display:none;"><span>No matches found.</span></div>`;
+      const filter = el.querySelector('.books-filter');
+      filter.addEventListener('input', () => {
+        const q = filter.value.trim().toLowerCase();
+        let shown = 0;
+        el.querySelectorAll('.book-opening-card').forEach(card => {
+          const ok = !q || card.dataset.title.includes(q);
+          card.style.display = ok ? '' : 'none';
+          if (ok) shown++;
+        });
+        el.querySelector('.books-no-match').style.display = shown ? 'none' : 'flex';
+      });
+      el.querySelectorAll('.review-analysis-btn').forEach(btn => btn.addEventListener('click', () => startOpeningReview(btn.dataset.cat, Number(btn.dataset.idx))));
+      return;
+    }
     el.innerHTML = items.length
       ? items.map(b => `<div class="friend-row book-row"><div><strong>${textEsc(b.title || 'Untitled')}</strong><small>${textEsc(b.author || '')}${b.description ? ' • ' + textEsc(b.description) : ''}</small></div>${b.link ? `<a class="pill-btn" href="${attrEsc(b.link)}" target="_blank" rel="noopener">Open</a>` : ''}</div>`).join('')
       : `<div class="books-empty"><div class="books-empty-icon">📖</div><strong>${titles[cat]}</strong><span>No content yet - coming soon.</span></div>`;
@@ -3322,4 +3374,122 @@ $(document).ready(function() {
   bind('closeBooksModalBtn', () => { document.getElementById('booksModal').style.display = 'none'; });
   document.querySelectorAll('.books-tab').forEach(b => b.addEventListener('click', () => switchBooksCategory(b.dataset.booksCat)));
   renderBooksPanels();
+});
+
+
+// =====================================================================
+// OPENING / DEFENCE REVIEW (Books > Review Analysis) - uses the main analysis board
+// =====================================================================
+let openingReview = null; // { title, sans, index, side }
+let openingReviewTimer = null;
+
+function stopOpeningAuto() {
+  if (openingReviewTimer) { clearInterval(openingReviewTimer); openingReviewTimer = null; }
+  const btn = document.getElementById('orAutoBtn');
+  if (btn) btn.textContent = '▶ Auto';
+}
+
+function clearOpeningLastMove() {
+  $('#myBoard .opening-last-move').removeClass('opening-last-move');
+}
+
+function closeOpeningReview() {
+  stopOpeningAuto();
+  clearOpeningLastMove();
+  openingReview = null;
+  const bar = document.getElementById('openingReviewBar');
+  if (bar) bar.style.display = 'none';
+}
+
+function startOpeningReview(cat, idx) {
+  const item = (BOOKS_DATA[cat] || [])[idx];
+  if (!item || !item.moves) return;
+  if (isOnlineMatchActive || currentRoomCode) { alert('Finish your current match before reviewing an opening.'); return; }
+  if (isBotThinking) { alert('Please wait for the bot to finish its move.'); return; }
+  const sans = item.moves.split(/\s+/).filter(Boolean);
+  document.getElementById('booksModal').style.display = 'none';
+  stopOpeningAuto();
+  setGameMode('analysis');
+  openingReview = { title: item.title, sans, index: 0, side: cat === 'defences' ? 'black' : 'white' };
+  board.orientation(openingReview.side);
+  document.getElementById('orTitle').textContent = item.title;
+  document.getElementById('openingReviewBar').style.display = 'block';
+  const analysisTabBtn = document.querySelector('.tab[data-tab="analysisTab"]');
+  if (analysisTabBtn) analysisTabBtn.click();
+  openingReviewGoTo(0);
+  const card = document.querySelector('.board-card');
+  if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function openingReviewGoTo(n) {
+  if (!openingReview) return;
+  if (isOnlineMatchActive || currentRoomCode || currentMode !== 'analysis') { closeOpeningReview(); return; }
+  const total = openingReview.sans.length;
+  n = Math.max(0, Math.min(total, n));
+  openingReview.index = n;
+  game.reset();
+  for (let i = 0; i < n; i++) game.move(openingReview.sans[i]);
+  redoStack = [];
+  moveQualityHistory = [];
+  clearClickHighlights();
+  selectedSquare = null;
+  board.position(game.fen());
+  updateGameReview();
+  updateUI();
+  // highlight last move
+  clearOpeningLastMove();
+  const hist = game.history({ verbose: true });
+  if (hist.length) {
+    const last = hist[hist.length - 1];
+    $(`#myBoard .square-${last.from}, #myBoard .square-${last.to}`).addClass('opening-last-move');
+  }
+  renderOpeningReviewBar();
+}
+
+function renderOpeningReviewBar() {
+  if (!openingReview) return;
+  const { sans, index } = openingReview;
+  const status = document.getElementById('orStatus');
+  if (index === 0) {
+    status.textContent = `Starting position - press ▶ to play move 1 of ${sans.length}.`;
+  } else {
+    const moveNo = Math.ceil(index / 2);
+    const side = index % 2 === 1 ? 'White' : 'Black';
+    status.innerHTML = `Move ${index} of ${sans.length}: <strong>${moveNo}${index % 2 === 1 ? '.' : '...'} ${textEsc(sans[index - 1])}</strong> (${side})`;
+  }
+  let html = '';
+  sans.forEach((san, i) => {
+    if (i % 2 === 0) html += `<span class="bk-num">${i / 2 + 1}.</span>`;
+    html += `<button type="button" class="rv-move${i + 1 === index ? ' active' : ''}" data-i="${i + 1}">${textEsc(san)}</button>`;
+  });
+  const list = document.getElementById('orMoves');
+  list.innerHTML = html;
+  list.querySelectorAll('.rv-move').forEach(b => b.addEventListener('click', () => { stopOpeningAuto(); openingReviewGoTo(Number(b.dataset.i)); }));
+  const act = list.querySelector('.rv-move.active');
+  if (act && act.scrollIntoView) act.scrollIntoView({ block: 'nearest' });
+  document.getElementById('orPrevBtn').disabled = index === 0;
+  document.getElementById('orStartBtn').disabled = index === 0;
+  document.getElementById('orNextBtn').disabled = index === sans.length;
+  document.getElementById('orEndBtn').disabled = index === sans.length;
+}
+
+$(document).ready(function() {
+  const b = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+  b('orStartBtn', () => { stopOpeningAuto(); openingReviewGoTo(0); });
+  b('orPrevBtn', () => { stopOpeningAuto(); if (openingReview) openingReviewGoTo(openingReview.index - 1); });
+  b('orNextBtn', () => { stopOpeningAuto(); if (openingReview) openingReviewGoTo(openingReview.index + 1); });
+  b('orEndBtn', () => { stopOpeningAuto(); if (openingReview) openingReviewGoTo(openingReview.sans.length); });
+  b('orCloseBtn', closeOpeningReview);
+  b('orAutoBtn', () => {
+    if (!openingReview) return;
+    if (openingReviewTimer) { stopOpeningAuto(); return; }
+    if (openingReview.index >= openingReview.sans.length) openingReviewGoTo(0);
+    document.getElementById('orAutoBtn').textContent = '⏸ Pause';
+    openingReviewTimer = setInterval(() => {
+      if (!openingReview || openingReview.index >= openingReview.sans.length) { stopOpeningAuto(); return; }
+      openingReviewGoTo(openingReview.index + 1);
+    }, 1200);
+  });
+  // Leaving analysis or resetting ends the review so it never interferes with other modes
+  ['modeBotBtn', 'modeFriendBtn', 'resetBtn'].forEach(id => b(id, closeOpeningReview));
 });

@@ -179,6 +179,22 @@
           <button id="playBestBtn" class="control-btn highlight-btn">⚡ Play Best</button>
           <button id="resetBtn" class="control-btn active-outline">↺ Reset</button>
         </div>
+        <!-- Opening / Defence review navigator (shown by Books > Review Analysis) -->
+        <div id="openingReviewBar" class="opening-review-bar" style="display:none;">
+          <div class="opening-review-head">
+            <div class="opening-review-title"><span class="label">Opening Review</span><strong id="orTitle"></strong></div>
+            <button type="button" id="orCloseBtn" class="opening-review-close" title="Close review" aria-label="Close review">✕</button>
+          </div>
+          <div class="opening-review-status" id="orStatus"></div>
+          <div class="opening-review-controls">
+            <button type="button" id="orStartBtn" class="control-btn" title="Start">⏮</button>
+            <button type="button" id="orPrevBtn" class="control-btn" title="Previous move">◀</button>
+            <button type="button" id="orNextBtn" class="control-btn highlight-btn" title="Next move">▶</button>
+            <button type="button" id="orEndBtn" class="control-btn" title="End">⏭</button>
+            <button type="button" id="orAutoBtn" class="control-btn">▶ Auto</button>
+          </div>
+          <div id="orMoves" class="opening-review-moves"></div>
+        </div>
         <div id="friendMatchResultPanel" class="friend-match-result-panel" style="display:none;"></div>
       </section>
 
@@ -359,6 +375,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script src="books_data.js"></script>
   <script src="script.js"></script>
 
 
