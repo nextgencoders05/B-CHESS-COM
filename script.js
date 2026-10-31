@@ -354,8 +354,11 @@ function createFriendRoom() {
     return triggerGoogleLogin();
   }
   if (!requireTermsAccepted()) return;
-  if (friendTimeChosen) return createFriendRoomWithTime(selectedFriendTimeControl);
-  showFriendTimeModal((seconds) => { friendTimeChosen = true; createFriendRoomWithTime(seconds); });
+  showFriendTimeModal((seconds) => {
+    selectedFriendTimeControl = Number(seconds) || 0;
+    friendTimeChosen = true;
+    createFriendRoomWithTime(selectedFriendTimeControl);
+  });
 }
 
 function createFriendRoomWithTime(timeSeconds, challengeFriendId = null, challengeFriendName = null) {
@@ -666,12 +669,15 @@ function listenToRoom(code, isCreator) {
     }
 
     if (val.guestName) {
-      if (friendTimeControl > 0 && !val.clockStartedAt && !val.gameOver) {
-        roomRef.update({
-          clockTurn: 'w',
-          clockStartedAt: firebase.database.ServerValue.TIMESTAMP,
-          whiteTimeLeft: friendTimeControl,
-          blackTimeLeft: friendTimeControl
+      if (friendTimeControl > 0 && val.guestId && val.guestName && !val.clockStartedAt && !val.gameOver) {
+        roomRef.transaction((current) => {
+          if (!current || current.gameOver || !current.guestId || current.clockStartedAt) return;
+          return Object.assign({}, current, {
+            clockTurn: 'w',
+            clockStartedAt: firebase.database.ServerValue.TIMESTAMP,
+            whiteTimeLeft: Number(current.timeControl) || friendTimeControl,
+            blackTimeLeft: Number(current.timeControl) || friendTimeControl
+          });
         });
       }
       const oppLabel = isCreator ? val.guestName : val.creatorName;
@@ -2559,8 +2565,10 @@ function setGameMode(mode) {
   if (mode === 'bot') {
     const undoBtn = document.getElementById('undoBtn');
     const redoBtn = document.getElementById('redoBtn');
+    const resetBtn = document.getElementById('resetBtn');
     if (undoBtn) undoBtn.style.display = '';
     if (redoBtn) redoBtn.style.display = '';
+    if (resetBtn) resetBtn.style.display = '';
     if (botControls) botControls.style.display = 'flex';
     if (friendControls) friendControls.style.display = 'none';
     if (chatTabBtn) chatTabBtn.style.display = 'none';
@@ -2573,8 +2581,10 @@ function setGameMode(mode) {
     if (friendControls) friendControls.style.display = 'flex';
     const undoBtn = document.getElementById('undoBtn');
     const redoBtn = document.getElementById('redoBtn');
+    const resetBtn = document.getElementById('resetBtn');
     if (undoBtn) undoBtn.style.display = 'none';
     if (redoBtn) redoBtn.style.display = 'none';
+    if (resetBtn) resetBtn.style.display = 'none';
     if (chatTabBtn) chatTabBtn.style.display = 'inline-block';
     if (playBestBtn) playBestBtn.style.display = 'none';
     document.getElementById('panelPrimaryLabel').textContent = 'Friend Match';
@@ -2583,8 +2593,10 @@ function setGameMode(mode) {
   } else {
     const undoBtn = document.getElementById('undoBtn');
     const redoBtn = document.getElementById('redoBtn');
+    const resetBtn = document.getElementById('resetBtn');
     if (undoBtn) undoBtn.style.display = '';
     if (redoBtn) redoBtn.style.display = '';
+    if (resetBtn) resetBtn.style.display = '';
     if (botControls) botControls.style.display = 'none';
     if (friendControls) friendControls.style.display = 'none';
     if (chatTabBtn) chatTabBtn.style.display = 'none';
@@ -2752,11 +2764,7 @@ $(document).ready(function() {
         return triggerGoogleLogin();
       }
       if (!requireTermsAccepted()) return;
-      showFriendTimeModal((seconds) => {
-        selectedFriendTimeControl = Number(seconds) || 0;
-        friendTimeChosen = true;
-        setGameMode('friend');
-      });
+      setGameMode('friend');
     });
   }
 
@@ -3372,6 +3380,7 @@ $(document).ready(function() {
   // Books
   bind('modeBooksBtn', openBooksModal);
   bind('closeBooksModalBtn', () => { document.getElementById('booksModal').style.display = 'none'; });
+  bind('closeBooksModalX', () => { document.getElementById('booksModal').style.display = 'none'; });
   document.querySelectorAll('.books-tab').forEach(b => b.addEventListener('click', () => switchBooksCategory(b.dataset.booksCat)));
   renderBooksPanels();
 });
