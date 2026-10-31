@@ -44,6 +44,9 @@ let friendRoomData = null;
 let challengeListenerRef = null;
 let challengeNotificationMap = {};
 let friendResultData = null;
+let isWaitingForOpponent = false;
+let waitingChallengeTargetId = null;
+let selfCancellingChallenge = false;
 
 // WebRTC Live Voice Chat State
 let peerConnection = null;
@@ -366,6 +369,9 @@ function createFriendRoomWithTime(timeSeconds, challengeFriendId = null, challen
   board.start();
   lockModeButtons(true);
   resetFriendClockUI();
+  // Match must not start until the opponent accepts.
+  waitingChallengeTargetId = challengeFriendId || null;
+  setWaitingForOpponent(true);
 
   database.ref("rooms/" + code).set({
     creatorId: currentUserId,
@@ -416,13 +422,23 @@ function joinFriendRoom() {
     lockModeButtons(true);
     resetFriendClockUI();
 
-    roomRef.update({
-      guestId: currentUserId,
-      guestName: currentUserName,
-      guestRating: currentUserRating,
-      status: 'playing',
-      gameOver: false
-    }).then(() => {
+    roomRef.transaction((cur) => {
+      if (cur === null) return cur;
+      if (cur.gameOver || (cur.guestId && cur.guestId !== currentUserId)) return;
+      return Object.assign({}, cur, {
+        guestId: currentUserId,
+        guestName: currentUserName,
+        guestRating: currentUserRating,
+        status: 'playing',
+        gameOver: false
+      });
+    }).then((res) => {
+      if (!res.committed || !res.snapshot.val()) {
+        cleanupFriendGame(false);
+        board.orientation('white');
+        alert('This challenge is no longer available. It may have been cancelled.');
+        return;
+      }
       friendRoomData = Object.assign({}, val, { guestId: currentUserId, guestName: currentUserName, guestRating: currentUserRating, guestPhoto: currentUserPhoto || '', status: 'playing' });
       document.getElementById("activeRoomInfo").style.display = "flex";
       document.getElementById("activeRoomCode").textContent = code;
@@ -553,6 +569,7 @@ function commitClockAfterMove(nextTurn) {
 }
 
 function leaveFriendGame() {
+  if (isWaitingForOpponent) { cancelWaitingChallenge(); return; }
   if (!currentRoomCode) {
     setGameMode('friend');
     return;
@@ -571,7 +588,37 @@ function leaveFriendGame() {
   });
 }
 
+function setWaitingForOpponent(waiting) {
+  isWaitingForOpponent = !!waiting;
+  const overlay = document.getElementById('waitingOverlay');
+  if (overlay) overlay.style.display = waiting ? 'flex' : 'none';
+  if (!waiting) waitingChallengeTargetId = null;
+}
+
+function cancelWaitingChallenge() {
+  if (!isWaitingForOpponent || !currentRoomCode) return;
+  const code = currentRoomCode;
+  const targetId = waitingChallengeTargetId;
+  selfCancellingChallenge = true;
+  // Only delete the room if no opponent has joined in the meantime.
+  database.ref('rooms/' + code).transaction((cur) => {
+    if (cur && cur.guestId) return; // already accepted - abort
+    return null;
+  }).then((res) => {
+    if (res.committed) {
+      if (targetId) database.ref('users/' + targetId + '/challenges/' + code).remove().catch(() => {});
+      cleanupFriendGame(false);
+    } else {
+      alert('Your opponent has just accepted - the match is starting.');
+    }
+  }).catch(() => {
+    if (targetId) database.ref('users/' + targetId + '/challenges/' + code).remove().catch(() => {});
+    cleanupFriendGame(false);
+  }).finally(() => { selfCancellingChallenge = false; });
+}
+
 function cleanupFriendGame(resetMode = true) {
+  setWaitingForOpponent(false);
   stopFriendClock();
   if (friendRoomListenerRef) { friendRoomListenerRef.off(); friendRoomListenerRef = null; }
   if (friendChatListenerRef) { friendChatListenerRef.off(); friendChatListenerRef = null; }
@@ -605,9 +652,18 @@ function listenToRoom(code, isCreator) {
   friendRoomListenerRef = roomRef;
   roomRef.on("value", (snap) => {
     const val = snap.val();
-    if (!val) return;
+    if (!val) {
+      if (isWaitingForOpponent && !selfCancellingChallenge && currentRoomCode === code) {
+        cleanupFriendGame(false);
+        alert('The challenge was declined or is no longer available.');
+      }
+      return;
+    }
     friendRoomData = val;
     updateFriendPlayerLabels(val);
+    if (isWaitingForOpponent && (val.guestId || val.guestName || val.status === 'playing')) {
+      setWaitingForOpponent(false);
+    }
 
     if (val.guestName) {
       if (friendTimeControl > 0 && !val.clockStartedAt && !val.gameOver) {
@@ -803,6 +859,11 @@ function acceptChallengeNotification(code) {
 
 function declineChallengeNotification(code) {
   database.ref('users/' + currentUserId + '/challenges/' + code).remove();
+  // Remove the pending room so the challenger is not left waiting forever.
+  database.ref('rooms/' + code).transaction((cur) => {
+    if (cur && !cur.guestId && cur.status === 'waiting' && !cur.gameOver) return null;
+    return cur;
+  }).catch(() => {});
 }
 
 function friendTimeLabel(seconds) {
@@ -1930,7 +1991,7 @@ function clearHighlights() {
 }
 
 function clearClickHighlights() {
-  $('#myBoard .square-55d63').removeClass('square-selected legal-dest-dot legal-dest-capture');
+  $('#myBoard .square-selected, #myBoard .legal-dest-dot, #myBoard .legal-dest-capture').removeClass('square-selected legal-dest-dot legal-dest-capture');
 }
 
 function showLegalDestinations(sourceSquare) {
@@ -2057,6 +2118,7 @@ function applyHumanMove(source, target, promotion = 'q') {
 
 // Drag & Drop Handlers
 function onDragStart(source, piece) {
+  if (isWaitingForOpponent) return false;
   if (game.game_over()) return false;
   if (isBotThinking) return false;
 
@@ -2077,7 +2139,8 @@ function onDragStart(source, piece) {
   }
 
   dragActive = true;
-  showLegalDestinations(source);
+  // Let the dragged piece render first; highlight legal squares on the next frame.
+  requestAnimationFrame(() => { if (dragActive) showLegalDestinations(source); });
 }
 
 function onDrop(source, target) {
@@ -2112,6 +2175,7 @@ function onSnapEnd() {
 
 // Universal Click & Touch handler for mobile & desktop
 function handleSquareClick(square) {
+  if (isWaitingForOpponent) return;
   if (game.game_over() || isBotThinking) return;
 
   if (selectedSquare) {
@@ -2590,11 +2654,24 @@ function copyFullAnalysisReport() {
   });
 }
 
+// Preload + decode all piece images so the first drag has no image-load/decode delay.
+const PIECE_IMG_URL = 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png';
+const preloadedPieceImages = [];
+function preloadPieceImages() {
+  ['wP','wN','wB','wR','wQ','wK','bP','bN','bB','bR','bQ','bK'].forEach(p => {
+    const img = new Image();
+    img.src = PIECE_IMG_URL.replace('{piece}', p);
+    if (img.decode) img.decode().catch(() => {});
+    preloadedPieceImages.push(img);
+  });
+}
+preloadPieceImages();
+
 $(document).ready(function() {
   const config = {
     draggable: true,
     position: 'start',
-    pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png',
+    pieceTheme: PIECE_IMG_URL,
     onDragStart: onDragStart,
     onDrop: onDrop,
     onSnapEnd: onSnapEnd
@@ -2914,4 +2991,335 @@ $(document).ready(function() {
       analyzePosition();
     }
   });
+});
+
+
+// =====================================================================
+// PLAYER SEARCH, PROFILE INSPECTION, MATCH REVIEW & BOOKS
+// (additive section - uses existing Firebase users/{id} + matchHistory)
+// =====================================================================
+function attrEsc(str) {
+  return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function textEsc(str) {
+  return String(str == null ? '' : str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ---------- Player search ----------
+let playerSearchTimer = null;
+let playerSearchSeq = 0;
+let playerSearchCache = {};
+
+async function fetchPlayersByPrefix(term) {
+  const lower = term.toLowerCase();
+  const variants = Array.from(new Set([term, lower, lower.charAt(0).toUpperCase() + lower.slice(1), term.toUpperCase()]));
+  const merged = {};
+  await Promise.all(variants.map(v =>
+    database.ref('users').orderByChild('username').startAt(v).endAt(v + '\uf8ff').limitToFirst(10).once('value')
+      .then(snap => {
+        const d = snap.val() || {};
+        Object.keys(d).forEach(id => { merged[id] = d[id]; });
+      })
+  ));
+  return Object.keys(merged)
+    .filter(id => String(merged[id].username || '').toLowerCase().startsWith(lower))
+    .slice(0, 10)
+    .map(id => ({
+      id,
+      username: merged[id].username || 'Player',
+      rating: Number(merged[id].rating || 800),
+      photo: merged[id].photo || merged[id].photoURL || ''
+    }));
+}
+
+function playerAvatarHtml(p, cls) {
+  return p.photo
+    ? `<img src="${attrEsc(p.photo)}" alt="" class="${cls}">`
+    : `<span class="${cls} ${cls}-fallback">${textEsc((p.username || 'P').charAt(0).toUpperCase())}</span>`;
+}
+
+function renderPlayerSearchResults(list, message) {
+  const box = document.getElementById('playerSearchResults');
+  if (!box) return;
+  box.style.display = 'block';
+  if (message) { box.innerHTML = `<div class="player-search-empty">${textEsc(message)}</div>`; return; }
+  playerSearchCache = {};
+  list.forEach(p => { playerSearchCache[p.id] = p; });
+  box.innerHTML = list.map(p => `
+    <div class="player-result-row" data-id="${attrEsc(p.id)}">
+      <div class="player-result-info">
+        ${playerAvatarHtml(p, 'player-result-avatar')}
+        <div class="player-result-text"><strong>${textEsc(p.username)}${p.id === currentUserId ? ' (You)' : ''}</strong><small>${p.rating} Elo</small></div>
+      </div>
+      <button type="button" class="pill-btn inspect-profile-btn" data-id="${attrEsc(p.id)}">Inspect Profile</button>
+    </div>`).join('');
+  box.querySelectorAll('.inspect-profile-btn').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openPlayerProfile(btn.dataset.id);
+  }));
+  box.querySelectorAll('.player-result-row').forEach(row => row.addEventListener('click', () => openPlayerProfile(row.dataset.id)));
+}
+
+function runPlayerSearch() {
+  const input = document.getElementById('playerSearchInput');
+  const term = (input.value || '').trim();
+  const box = document.getElementById('playerSearchResults');
+  if (!term) { if (box) box.style.display = 'none'; return; }
+  if (!currentUserId) { renderPlayerSearchResults([], 'Sign in with Google to search players.'); return; }
+  const seq = ++playerSearchSeq;
+  renderPlayerSearchResults([], 'Searching...');
+  fetchPlayersByPrefix(term).then(list => {
+    if (seq !== playerSearchSeq) return;
+    if (!list.length) return renderPlayerSearchResults([], 'No players found.');
+    renderPlayerSearchResults(list);
+  }).catch(err => {
+    console.warn('Player search failed:', err);
+    if (seq === playerSearchSeq) renderPlayerSearchResults([], 'Search is unavailable right now.');
+  });
+}
+
+// ---------- Profile inspection ----------
+let inspectedMatches = [];
+
+function formatMatchDate(ts) {
+  try { return new Date(ts || Date.now()).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); } catch (_) { return ''; }
+}
+
+function openPlayerProfile(userId) {
+  if (!currentUserId) { alert('Please Sign in with Google first!'); return; }
+  const results = document.getElementById('playerSearchResults');
+  if (results) results.style.display = 'none';
+  const modal = document.getElementById('playerProfileModal');
+  const body = document.getElementById('playerProfileBody');
+  modal.style.display = 'flex';
+  body.innerHTML = '<div class="friend-empty">Loading profile...</div>';
+  database.ref('users/' + userId).once('value').then(snap => {
+    const u = snap.val();
+    if (!u) { body.innerHTML = '<div class="friend-empty">Player not found.</div>'; return; }
+    renderPlayerProfile(userId, u);
+  }).catch(err => {
+    console.warn('Profile load failed:', err);
+    body.innerHTML = '<div class="friend-empty">Could not load this profile.</div>';
+  });
+}
+
+function renderPlayerProfile(userId, u) {
+  const body = document.getElementById('playerProfileBody');
+  const hist = u.matchHistory || {};
+  const matches = Object.entries(hist).map(([code, v]) => Object.assign({ code }, v))
+    .sort((a, b) => (b.playedAt || 0) - (a.playedAt || 0));
+  inspectedMatches = matches;
+  const total = matches.length;
+  const wins = matches.filter(m => m.result === 'win');
+  const losses = matches.filter(m => m.result === 'loss').length;
+  const draws = matches.filter(m => m.result === 'draw').length;
+  const winRate = total ? Math.round((wins.length / total) * 100) : 0;
+  const player = { username: u.username || 'Player', photo: u.photo || u.photoURL || '' };
+
+  // Win history: players they defeated (grouped)
+  const defeated = {};
+  wins.forEach(m => {
+    const key = m.opponentId || m.opponentName || 'unknown';
+    if (!defeated[key]) defeated[key] = { name: m.opponentName || 'Player', count: 0, last: 0 };
+    defeated[key].count++;
+    defeated[key].last = Math.max(defeated[key].last, m.playedAt || 0);
+  });
+  const defeatedRows = Object.values(defeated).sort((a, b) => b.last - a.last);
+
+  // Performance by time control
+  const byTc = {};
+  matches.forEach(m => {
+    const k = m.timeLabel || 'No Timer';
+    if (!byTc[k]) byTc[k] = { w: 0, l: 0, d: 0 };
+    if (m.result === 'win') byTc[k].w++; else if (m.result === 'loss') byTc[k].l++; else byTc[k].d++;
+  });
+
+  const matchRow = (m, i) => `
+    <div class="history-match-row">
+      <div><strong>vs ${textEsc(m.opponentName || 'Player')}</strong><small>${textEsc(m.timeLabel || 'No Timer')} • ${formatMatchDate(m.playedAt)}${m.resultType ? ' • ' + textEsc(m.resultType) : ''}</small></div>
+      <div class="profile-match-actions">
+        <span class="history-result ${attrEsc(m.result || 'draw')}">${textEsc((m.result || 'draw').toUpperCase())}</span>
+        <button type="button" class="pill-btn review-match-btn" data-idx="${i}">Review</button>
+      </div>
+    </div>`;
+
+  body.innerHTML = `
+    <div class="pp-header">
+      ${playerAvatarHtml(player, 'pp-avatar')}
+      <div class="pp-header-text"><h2>${textEsc(player.username)}</h2><span class="rating-badge-pill">${Number(u.rating || 800)} Elo</span></div>
+    </div>
+    <div class="pp-stats">
+      <div class="pp-stat"><strong>${total}</strong><span>Played</span></div>
+      <div class="pp-stat pp-win"><strong>${wins.length}</strong><span>Won</span></div>
+      <div class="pp-stat pp-loss"><strong>${losses}</strong><span>Lost</span></div>
+      <div class="pp-stat"><strong>${draws}</strong><span>Drawn</span></div>
+    </div>
+    <div class="pp-section-title">Performance</div>
+    <div class="pp-winrate"><div class="pp-winrate-bar"><div class="pp-winrate-fill" style="width:${winRate}%"></div></div><span>${winRate}% win rate</span></div>
+    ${Object.keys(byTc).length ? `<div class="pp-tc-list">${Object.entries(byTc).map(([k, v]) => `<span class="pp-tc-chip">${textEsc(k)}: <b>${v.w}W</b> ${v.l}L ${v.d}D</span>`).join('')}</div>` : ''}
+    <div class="pp-section-title">Win History (players defeated)</div>
+    <div class="friend-list">${defeatedRows.length ? defeatedRows.map(d => `<div class="friend-row"><div><strong>${textEsc(d.name)}</strong><small>Last win ${formatMatchDate(d.last)}</small></div><span class="history-result win">${d.count}x</span></div>`).join('') : '<div class="friend-empty">No wins yet.</div>'}</div>
+    <div class="pp-section-title">Recent Matches</div>
+    <div class="friend-list">${total ? matches.slice(0, 5).map((m, i) => matchRow(m, i)).join('') : '<div class="friend-empty">No matches played yet.</div>'}</div>
+    ${total > 5 ? `<div class="pp-section-title">Previous Matches (tap Review to replay)</div><div class="friend-list pp-all-matches">${matches.slice(5).map((m, i) => matchRow(m, i + 5)).join('')}</div>` : ''}
+  `;
+  body.querySelectorAll('.review-match-btn').forEach(btn => btn.addEventListener('click', () => openMatchReview(Number(btn.dataset.idx), player.username)));
+}
+
+function closePlayerProfile() {
+  const modal = document.getElementById('playerProfileModal');
+  if (modal) modal.style.display = 'none';
+}
+
+// ---------- Match review ----------
+let reviewBoard = null;
+let reviewGame = null;
+let reviewFens = [];
+let reviewSans = [];
+let reviewIndex = 0;
+
+function openMatchReview(idx, playerName) {
+  const m = inspectedMatches[idx];
+  if (!m) return;
+  const sans = Array.isArray(m.moves) ? m.moves : (m.moves ? Object.values(m.moves) : []);
+  if (!sans.length) { alert('No move record is available for this match.'); return; }
+  reviewGame = new Chess();
+  reviewFens = [reviewGame.fen()];
+  reviewSans = [];
+  for (const san of sans) {
+    if (!reviewGame.move(san)) break;
+    reviewSans.push(san);
+    reviewFens.push(reviewGame.fen());
+  }
+  reviewIndex = reviewFens.length - 1;
+  document.getElementById('matchReviewTitle').textContent = `${playerName} vs ${m.opponentName || 'Player'}`;
+  document.getElementById('matchReviewSub').textContent = `${(m.result || 'draw').toUpperCase()} • ${m.timeLabel || 'No Timer'} • ${formatMatchDate(m.playedAt)}`;
+  document.getElementById('matchReviewModal').style.display = 'flex';
+  if (reviewBoard) { try { reviewBoard.destroy(); } catch (_) {} reviewBoard = null; }
+  reviewBoard = Chessboard('reviewBoard', { draggable: false, position: reviewFens[reviewIndex], pieceTheme: PIECE_IMG_URL });
+  renderReviewMoveList();
+  setReviewIndex(reviewIndex);
+}
+
+function renderReviewMoveList() {
+  const list = document.getElementById('reviewMoveList');
+  let html = '';
+  for (let i = 0; i < reviewSans.length; i++) {
+    if (i % 2 === 0) html += `<span class="rv-num">${i / 2 + 1}.</span>`;
+    html += `<button type="button" class="rv-move" data-i="${i + 1}">${textEsc(reviewSans[i])}</button>`;
+  }
+  list.innerHTML = html;
+  list.querySelectorAll('.rv-move').forEach(b => b.addEventListener('click', () => setReviewIndex(Number(b.dataset.i))));
+}
+
+function setReviewIndex(i) {
+  reviewIndex = Math.max(0, Math.min(reviewFens.length - 1, i));
+  if (reviewBoard) reviewBoard.position(reviewFens[reviewIndex]);
+  document.querySelectorAll('#reviewMoveList .rv-move').forEach(b => {
+    const active = Number(b.dataset.i) === reviewIndex;
+    b.classList.toggle('active', active);
+    if (active) b.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+function closeMatchReview() {
+  document.getElementById('matchReviewModal').style.display = 'none';
+  if (reviewBoard) { try { reviewBoard.destroy(); } catch (_) {} reviewBoard = null; }
+}
+
+function openReviewInAnalysis() {
+  if (isOnlineMatchActive || currentRoomCode) { alert('Finish your current match before loading a game into Analysis.'); return; }
+  const sans = reviewSans.slice();
+  closeMatchReview();
+  closePlayerProfile();
+  setGameMode('analysis');
+  game.reset();
+  redoStack = [];
+  moveQualityHistory = [];
+  sans.forEach(san => game.move(san));
+  clearClickHighlights();
+  selectedSquare = null;
+  board.position(game.fen());
+  updateGameReview();
+  updateUI();
+}
+
+// ---------- Books (structure only) ----------
+// Add your content later by pushing objects into these arrays, e.g.:
+//   BOOKS_DATA.openings.push({ title: 'Book title', author: 'Author', description: '...', link: 'https://...' });
+const BOOKS_DATA = {
+  openings: [],
+  defences: [],
+  other: []
+};
+
+function renderBooksPanels() {
+  const map = { openings: 'booksPanelOpenings', defences: 'booksPanelDefences', other: 'booksPanelOther' };
+  const titles = { openings: 'Openings', defences: 'Defences', other: 'Other Learning Materials' };
+  Object.keys(map).forEach(cat => {
+    const el = document.getElementById(map[cat]);
+    if (!el) return;
+    const items = BOOKS_DATA[cat] || [];
+    el.innerHTML = items.length
+      ? items.map(b => `<div class="friend-row book-row"><div><strong>${textEsc(b.title || 'Untitled')}</strong><small>${textEsc(b.author || '')}${b.description ? ' • ' + textEsc(b.description) : ''}</small></div>${b.link ? `<a class="pill-btn" href="${attrEsc(b.link)}" target="_blank" rel="noopener">Open</a>` : ''}</div>`).join('')
+      : `<div class="books-empty"><div class="books-empty-icon">📖</div><strong>${titles[cat]}</strong><span>No content yet - coming soon.</span></div>`;
+  });
+}
+
+function openBooksModal() {
+  renderBooksPanels();
+  document.getElementById('booksModal').style.display = 'flex';
+}
+function switchBooksCategory(cat) {
+  document.querySelectorAll('.books-tab').forEach(b => b.classList.toggle('active', b.dataset.booksCat === cat));
+  document.querySelectorAll('.books-panel').forEach(p => { p.style.display = p.dataset.booksPanel === cat ? 'block' : 'none'; });
+}
+
+// ---------- Wiring ----------
+$(document).ready(function() {
+  // Waiting overlay: cancel challenge
+  const cancelChallengeBtn = document.getElementById('cancelChallengeBtn');
+  if (cancelChallengeBtn) cancelChallengeBtn.addEventListener('click', cancelWaitingChallenge);
+
+  // Player search
+  const psInput = document.getElementById('playerSearchInput');
+  const psClear = document.getElementById('playerSearchClearBtn');
+  if (psInput) {
+    psInput.addEventListener('input', () => {
+      if (psClear) psClear.style.display = psInput.value ? 'inline-flex' : 'none';
+      clearTimeout(playerSearchTimer);
+      playerSearchTimer = setTimeout(runPlayerSearch, 350);
+    });
+    psInput.addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(playerSearchTimer); runPlayerSearch(); } });
+    psInput.addEventListener('focus', () => { if (psInput.value.trim()) runPlayerSearch(); });
+  }
+  if (psClear) psClear.addEventListener('click', () => {
+    psInput.value = '';
+    psClear.style.display = 'none';
+    playerSearchSeq++;
+    document.getElementById('playerSearchResults').style.display = 'none';
+  });
+  document.addEventListener('click', (e) => {
+    const wrap = document.getElementById('playerSearchWrap');
+    if (wrap && !wrap.contains(e.target)) document.getElementById('playerSearchResults').style.display = 'none';
+  });
+
+  // Profile + review modals
+  const closeProfile = document.getElementById('closePlayerProfileBtn');
+  if (closeProfile) closeProfile.addEventListener('click', closePlayerProfile);
+  const closeReview = document.getElementById('closeMatchReviewBtn');
+  if (closeReview) closeReview.addEventListener('click', closeMatchReview);
+  const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+  bind('reviewStartBtn', () => setReviewIndex(0));
+  bind('reviewPrevBtn', () => setReviewIndex(reviewIndex - 1));
+  bind('reviewNextBtn', () => setReviewIndex(reviewIndex + 1));
+  bind('reviewEndBtn', () => setReviewIndex(reviewFens.length - 1));
+  bind('reviewFlipBtn', () => { if (reviewBoard) reviewBoard.flip(); });
+  bind('reviewOpenAnalysisBtn', openReviewInAnalysis);
+
+  // Books
+  bind('modeBooksBtn', openBooksModal);
+  bind('closeBooksModalBtn', () => { document.getElementById('booksModal').style.display = 'none'; });
+  document.querySelectorAll('.books-tab').forEach(b => b.addEventListener('click', () => switchBooksCategory(b.dataset.booksCat)));
+  renderBooksPanels();
 });
