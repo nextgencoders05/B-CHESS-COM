@@ -84,9 +84,11 @@
             <div id="activeRoomInfo" class="active-room-bar" style="display: none;">
               <div class="active-room-header">
                 <span class="room-code-tag">Room: <strong id="activeRoomCode">------</strong></span>
+                <span class="room-code-tag" id="activeTimeControl">⏱ No Timer</span>
                 <button id="copyRoomCodeBtn" class="pill-btn">📋 Copy</button>
                 <button id="offerDrawBtn" class="pill-btn">🤝 Draw</button>
                 <button id="resignBtn" class="pill-btn resign-danger-btn">🏳️ Resign (-8)</button>
+                <button id="leaveGameBtn" class="pill-btn leave-game-btn">🚪 Leave Game</button>
               </div>
               <div class="voice-chat-row">
                 <div class="voice-status-box">
@@ -109,6 +111,12 @@
           </div>
           <div class="captured-pieces-list" id="topCapturedPieces"></div>
           <span class="material-advantage" id="topMaterialAdv"></span>
+        </div>
+
+        <div id="friendClockBar" class="friend-clock-bar" style="display:none;">
+          <div id="blackClock" class="chess-clock">10:00</div>
+          <span id="clockModeLabel" class="clock-mode-label">Rapid</span>
+          <div id="whiteClock" class="chess-clock">10:00</div>
         </div>
 
         <div class="board-and-eval">
@@ -330,6 +338,30 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="script.js"></script>
+
+  <!-- Friend Time Control Modal -->
+  <div id="friendTimeModal" class="skill-modal-overlay" style="display:none;">
+    <div class="skill-modal-window friend-time-modal-window">
+      <div class="modal-chess-icon">⏱</div>
+      <h2>Choose Time Control</h2>
+      <p class="modal-subtext">Select how long each player gets for the game.</p>
+      <div class="time-control-grid">
+        <button class="time-control-card" data-time-control="600">
+          <strong>♟ Rapid</strong><span>10 min</span>
+        </button>
+        <button class="time-control-card" data-time-control="300">
+          <strong>⚡ Blitz</strong><span>5 min</span>
+        </button>
+        <button class="time-control-card" data-time-control="60">
+          <strong>🔥 Bullet</strong><span>1 min</span>
+        </button>
+        <button class="time-control-card" data-time-control="0">
+          <strong>🕐 No Timer</strong><span>Unlimited</span>
+        </button>
+      </div>
+      <button id="cancelFriendTimeBtn" class="pill-btn">Cancel</button>
+    </div>
+  </div>
 
   <!-- Terms & Conditions Modal -->
   <div id="termsModal" class="skill-modal-overlay terms-modal-overlay" style="display: none;">

@@ -26,6 +26,17 @@ let currentUserRating = 800;
 let currentRoomCode = null;
 let myOnlineColor = 'w';
 let isOnlineMatchActive = false;
+let selectedFriendTimeControl = 600;
+let friendTimeChosen = false;
+let friendTimeControl = 0;
+let whiteTimeLeft = 0;
+let blackTimeLeft = 0;
+let friendClockInterval = null;
+let friendClockStartedAt = null;
+let friendClockTurn = null;
+let friendClockExpiredHandled = false;
+let friendRoomListenerRef = null;
+let friendChatListenerRef = null;
 
 // WebRTC Live Voice Chat State
 let peerConnection = null;
@@ -323,13 +334,20 @@ function createFriendRoom() {
     return triggerGoogleLogin();
   }
   if (!requireTermsAccepted()) return;
+  if (friendTimeChosen) return createFriendRoomWithTime(selectedFriendTimeControl);
+  showFriendTimeModal((seconds) => { friendTimeChosen = true; createFriendRoomWithTime(seconds); });
+}
+
+function createFriendRoomWithTime(timeSeconds) {
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   currentRoomCode = code;
   myOnlineColor = 'w';
+  friendTimeControl = Number(timeSeconds) || 0;
   board.orientation('white');
   game.reset();
   board.start();
   lockModeButtons(true);
+  resetFriendClockUI();
 
   database.ref("rooms/" + code).set({
     creatorId: currentUserId,
@@ -338,10 +356,13 @@ function createFriendRoom() {
     guestId: null,
     guestName: null,
     gameFen: 'start',
-    status: 'waiting'
+    status: 'waiting',
+    timeControl: friendTimeControl,
+    gameOver: false
   }).then(() => {
     document.getElementById("activeRoomInfo").style.display = "flex";
     document.getElementById("activeRoomCode").textContent = code;
+    updateTimeControlUI();
     listenToRoom(code, true);
     startVoiceChat(code, true);
   });
@@ -360,24 +381,192 @@ function joinFriendRoom() {
   roomRef.once("value", (snap) => {
     const val = snap.val();
     if (!val) return alert("Invalid room code!");
+    if (val.gameOver) return alert("This game has already ended.");
+    if (val.guestId && val.guestId !== currentUserId) return alert("This room already has a player.");
 
     currentRoomCode = code;
     myOnlineColor = 'b';
+    friendTimeControl = Number(val.timeControl) || 0;
     board.orientation('black');
     lockModeButtons(true);
+    resetFriendClockUI();
 
     roomRef.update({
       guestId: currentUserId,
       guestName: currentUserName,
       guestRating: currentUserRating,
-      status: 'playing'
+      status: 'playing',
+      gameOver: false
     }).then(() => {
       document.getElementById("activeRoomInfo").style.display = "flex";
       document.getElementById("activeRoomCode").textContent = code;
+      updateTimeControlUI();
       listenToRoom(code, false);
       startVoiceChat(code, false);
     });
   });
+}
+
+function showFriendTimeModal(onSelect) {
+  const modal = document.getElementById('friendTimeModal');
+  if (!modal) return onSelect(selectedFriendTimeControl);
+  modal.style.display = 'flex';
+  modal.__onSelect = onSelect;
+}
+
+function closeFriendTimeModal() {
+  const modal = document.getElementById('friendTimeModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function formatClock(seconds) {
+  const safe = Math.max(0, Math.ceil(Number(seconds) || 0));
+  const m = Math.floor(safe / 60);
+  const sec = safe % 60;
+  return String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+}
+
+function updateTimeControlUI() {
+  const label = document.getElementById('activeTimeControl');
+  const clockBar = document.getElementById('friendClockBar');
+  const modeLabel = document.getElementById('clockModeLabel');
+  if (!label || !clockBar) return;
+  const names = { 600: 'Rapid • 10 min', 300: 'Blitz • 5 min', 60: 'Bullet • 1 min', 0: 'No Timer' };
+  label.textContent = '⏱ ' + (names[friendTimeControl] || 'No Timer');
+  if (friendTimeControl > 0) {
+    clockBar.style.display = 'flex';
+    if (modeLabel) modeLabel.textContent = names[friendTimeControl].split(' • ')[0];
+  } else {
+    clockBar.style.display = 'none';
+  }
+}
+
+function resetFriendClockUI() {
+  stopFriendClock();
+  friendClockStartedAt = null;
+  friendClockTurn = null;
+  friendClockExpiredHandled = false;
+  whiteTimeLeft = friendTimeControl;
+  blackTimeLeft = friendTimeControl;
+  const w = document.getElementById('whiteClock');
+  const b = document.getElementById('blackClock');
+  if (w) w.textContent = formatClock(whiteTimeLeft);
+  if (b) b.textContent = formatClock(blackTimeLeft);
+  if (w) w.classList.remove('active-clock','low-clock');
+  if (b) b.classList.remove('active-clock','low-clock');
+  updateTimeControlUI();
+}
+
+function stopFriendClock() {
+  if (friendClockInterval) {
+    clearInterval(friendClockInterval);
+    friendClockInterval = null;
+  }
+}
+
+function renderFriendClock() {
+  if (!friendTimeControl || !friendClockTurn || !friendClockStartedAt) return;
+  const elapsed = Math.max(0, (Date.now() - friendClockStartedAt) / 1000);
+  const w = friendClockTurn === 'w' ? Math.max(0, whiteTimeLeft - elapsed) : whiteTimeLeft;
+  const b = friendClockTurn === 'b' ? Math.max(0, blackTimeLeft - elapsed) : blackTimeLeft;
+  const wEl = document.getElementById('whiteClock');
+  const bEl = document.getElementById('blackClock');
+  if (wEl) { wEl.textContent = formatClock(w); wEl.classList.toggle('active-clock', friendClockTurn === 'w'); wEl.classList.toggle('low-clock', w <= 10); }
+  if (bEl) { bEl.textContent = formatClock(b); bEl.classList.toggle('active-clock', friendClockTurn === 'b'); bEl.classList.toggle('low-clock', b <= 10); }
+  if ((friendClockTurn === 'w' && w <= 0) || (friendClockTurn === 'b' && b <= 0)) {
+    handleFriendTimeout(friendClockTurn);
+  }
+}
+
+function startFriendClock(turn, startedAt, whiteLeft, blackLeft) {
+  if (!friendTimeControl || !currentRoomCode || !turn || !startedAt) return;
+  friendClockTurn = turn;
+  friendClockStartedAt = Number(startedAt);
+  whiteTimeLeft = Number(whiteLeft);
+  blackTimeLeft = Number(blackLeft);
+  friendClockExpiredHandled = false;
+  stopFriendClock();
+  renderFriendClock();
+  friendClockInterval = setInterval(renderFriendClock, 250);
+}
+
+function snapshotFriendClock() {
+  if (!friendTimeControl || !friendClockTurn || !friendClockStartedAt) {
+    return { whiteTimeLeft, blackTimeLeft };
+  }
+  const elapsed = Math.max(0, (Date.now() - friendClockStartedAt) / 1000);
+  return {
+    whiteTimeLeft: friendClockTurn === 'w' ? Math.max(0, whiteTimeLeft - elapsed) : whiteTimeLeft,
+    blackTimeLeft: friendClockTurn === 'b' ? Math.max(0, blackTimeLeft - elapsed) : blackTimeLeft
+  };
+}
+
+function handleFriendTimeout(color) {
+  if (friendClockExpiredHandled || !currentRoomCode) return;
+  friendClockExpiredHandled = true;
+  stopFriendClock();
+  const winnerColor = color === 'w' ? 'b' : 'w';
+  database.ref('rooms/' + currentRoomCode).once('value').then(snap => {
+    const val = snap.val();
+    if (!val || val.gameOver) return;
+    const winnerId = winnerColor === 'w' ? val.creatorId : val.guestId;
+    database.ref('rooms/' + currentRoomCode).update({
+      gameOver: true,
+      result: 'timeout',
+      winner: winnerId,
+      timeoutColor: color
+    });
+  });
+}
+
+function commitClockAfterMove(nextTurn) {
+  if (!friendTimeControl || !currentRoomCode) return null;
+  const left = snapshotFriendClock();
+  return {
+    whiteTimeLeft: left.whiteTimeLeft,
+    blackTimeLeft: left.blackTimeLeft,
+    clockTurn: nextTurn,
+    clockStartedAt: firebase.database.ServerValue.TIMESTAMP
+  };
+}
+
+function leaveFriendGame() {
+  if (!currentRoomCode) {
+    setGameMode('friend');
+    return;
+  }
+  if (!confirm('Leave this game? Your current game will be abandoned.')) return;
+  const code = currentRoomCode;
+  const roomRef = database.ref('rooms/' + code);
+  roomRef.once('value').then(snap => {
+    const val = snap.val() || {};
+    const opponentId = val.creatorId === currentUserId ? val.guestId : val.creatorId;
+    return roomRef.update({ gameOver: true, result: 'left', leftBy: currentUserId, winner: opponentId || null });
+  }).finally(() => {
+    cleanupFriendGame(false);
+  });
+}
+
+function cleanupFriendGame(resetMode = true) {
+  stopFriendClock();
+  if (friendRoomListenerRef) { friendRoomListenerRef.off(); friendRoomListenerRef = null; }
+  if (friendChatListenerRef) { friendChatListenerRef.off(); friendChatListenerRef = null; }
+  try { if (peerConnection) peerConnection.close(); } catch (_) {}
+  peerConnection = null;
+  audioTransceiver = null;
+  localVoiceStream = null;
+  currentRoomCode = null;
+  isOnlineMatchActive = false;
+  friendTimeControl = 0;
+  friendClockStartedAt = null;
+  friendClockTurn = null;
+  resetFriendClockUI();
+  const info = document.getElementById('activeRoomInfo');
+  if (info) info.style.display = 'none';
+  const codeInput = document.getElementById('roomCodeInput');
+  if (codeInput) codeInput.value = '';
+  lockModeButtons(false);
+  if (resetMode) setGameMode('friend');
 }
 
 function copyRoomCode() {
@@ -389,11 +578,20 @@ function copyRoomCode() {
 
 function listenToRoom(code, isCreator) {
   const roomRef = database.ref("rooms/" + code);
+  friendRoomListenerRef = roomRef;
   roomRef.on("value", (snap) => {
     const val = snap.val();
     if (!val) return;
 
     if (val.guestName) {
+      if (friendTimeControl > 0 && !val.clockStartedAt && !val.gameOver) {
+        roomRef.update({
+          clockTurn: 'w',
+          clockStartedAt: firebase.database.ServerValue.TIMESTAMP,
+          whiteTimeLeft: friendTimeControl,
+          blackTimeLeft: friendTimeControl
+        });
+      }
       const oppLabel = isCreator ? val.guestName : val.creatorName;
       const chatOpp = document.getElementById("chatOpponentName");
       if (chatOpp) chatOpp.textContent = oppLabel + " (" + (isCreator ? val.guestRating : val.creatorRating) + ")";
@@ -416,9 +614,30 @@ function listenToRoom(code, isCreator) {
       }
     }
 
+    if (val.timeControl !== undefined && friendTimeControl === 0 && currentRoomCode === code) {
+      friendTimeControl = Number(val.timeControl) || 0;
+      updateTimeControlUI();
+      if (friendTimeControl > 0 && val.clockTurn && val.clockStartedAt) {
+        startFriendClock(val.clockTurn, val.clockStartedAt, Number(val.whiteTimeLeft), Number(val.blackTimeLeft));
+      }
+    }
+
+    if (val.clockTurn && val.clockStartedAt && friendTimeControl > 0 && currentRoomCode === code && !val.gameOver) {
+      const changed = friendClockTurn !== val.clockTurn || Number(friendClockStartedAt) !== Number(val.clockStartedAt);
+      if (changed) startFriendClock(val.clockTurn, val.clockStartedAt, Number(val.whiteTimeLeft), Number(val.blackTimeLeft));
+    }
+
     if (val.gameOver) {
+      stopFriendClock();
       lockModeButtons(false);
-      if (val.result === 'resigned') {
+      if (val.result === 'left') {
+        if (val.leftBy !== currentUserId) alert('Opponent left the game.');
+        cleanupFriendGame(true);
+        return;
+      } else if (val.result === 'timeout') {
+        const iWon = val.winner === currentUserId;
+        alert(iWon ? 'Opponent ran out of time! You won.' : 'Time is over. Opponent won.');
+      } else if (val.result === 'resigned') {
         const iWon = val.winner === currentUserId;
         alert(iWon ? "Opponent resigned! You won (+8 Rating)!" : "You resigned (-8 Rating).");
       } else if (val.result === 'draw') {
@@ -435,9 +654,11 @@ function listenToRoom(code, isCreator) {
 
 function checkOnlineTrigger(move) {
   if (currentMode === 'friend' && currentRoomCode) {
+    const clockUpdate = commitClockAfterMove(game.turn());
     database.ref("rooms/" + currentRoomCode).update({
       gameFen: game.fen(),
-      lastMove: { from: move.from, to: move.to }
+      lastMove: { from: move.from, to: move.to },
+      ...(clockUpdate || {})
     });
 
     if (game.in_checkmate()) {
@@ -504,7 +725,8 @@ function listenForChat(code) {
   if (!box) return;
   box.innerHTML = "";
 
-  database.ref("rooms/" + code + "/chat").limitToLast(40).on("child_added", (snap) => {
+  friendChatListenerRef = database.ref("rooms/" + code + "/chat").limitToLast(40);
+  friendChatListenerRef.on("child_added", (snap) => {
     const msg = snap.val();
     const isMe = msg.senderId === currentUserId;
     const bubble = document.createElement("div");
@@ -2072,7 +2294,11 @@ $(document).ready(function() {
         return triggerGoogleLogin();
       }
       if (!requireTermsAccepted()) return;
-      setGameMode('friend');
+      showFriendTimeModal((seconds) => {
+        selectedFriendTimeControl = Number(seconds) || 0;
+        friendTimeChosen = true;
+        setGameMode('friend');
+      });
     });
   }
 
@@ -2112,6 +2338,18 @@ $(document).ready(function() {
   const createBtn = document.getElementById('createRoomBtn');
   if (createBtn) createBtn.addEventListener('click', createFriendRoom);
 
+  document.querySelectorAll('.time-control-card').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedFriendTimeControl = Number(btn.dataset.timeControl) || 0;
+      const modal = document.getElementById('friendTimeModal');
+      const callback = modal && modal.__onSelect;
+      closeFriendTimeModal();
+      if (typeof callback === 'function') callback(selectedFriendTimeControl);
+    });
+  });
+  const cancelTimeBtn = document.getElementById('cancelFriendTimeBtn');
+  if (cancelTimeBtn) cancelTimeBtn.addEventListener('click', closeFriendTimeModal);
+
   const joinBtn = document.getElementById('joinRoomBtn');
   if (joinBtn) joinBtn.addEventListener('click', joinFriendRoom);
 
@@ -2128,6 +2366,8 @@ $(document).ready(function() {
 
   const resBtn = document.getElementById('resignBtn');
   if (resBtn) resBtn.addEventListener('click', resignGame);
+  const leaveBtn = document.getElementById('leaveGameBtn');
+  if (leaveBtn) leaveBtn.addEventListener('click', leaveFriendGame);
 
   const chatF = document.getElementById('chatForm');
   if (chatF) chatF.addEventListener('submit', handleSendChat);
