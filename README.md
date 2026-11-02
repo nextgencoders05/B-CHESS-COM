@@ -28,12 +28,3 @@ the button explains Safari > Share > Add to Home Screen.
 After installation, B Chess opens in standalone app mode without the normal browser tab/address
 bar. The manifest, icons and service worker are included. A normal HTTPS deployment is required
 for service-worker/PWA installation.
-
-
-## v8 Fixes
-- Mobile challenge notifications now show immediately inside the app as a direct notification card.
-- Browser/PWA Notification API is used for phone-style notifications when permission is available.
-- Clicking the notification focuses the app and opens the challenge list.
-- Sending a challenge now immediately confirms that the challenge was sent and shows the waiting opponent.
-- Navigation order is now: Players → Vs Bot → Friend → Analyze → Books.
-- Service-worker cache version bumped so the updated files are picked up after deployment.

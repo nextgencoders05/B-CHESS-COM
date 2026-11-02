@@ -2,23 +2,16 @@
    mode buttons. It never changes game logic, voice/mic, rules or modes. */
 (function () {
   'use strict';
-  // Navigation order requested:
-  // Players → Vs Bot → Friend → Analyze → Books
-  // Players opens the existing friends/player panel; the original game logic is untouched.
   var items = [
-    { id: 'playersNavBtn',  ico: '👤', label: 'Players', action: function(){ if (typeof openFriendsModal === 'function') openFriendsModal('friends'); } },
+    { id: 'modeAnalyzeBtn', ico: '🔍', label: 'Analyze' },
     { id: 'modeBotBtn',     ico: '🤖', label: 'Vs Bot' },
     { id: 'modeFriendBtn',  ico: '👥', label: 'Friend' },
-    { id: 'modeAnalyzeBtn', ico: '🔍', label: 'Analyze' },
     { id: 'modeBooksBtn',   ico: '📚', label: 'Books' }
   ];
   function init() {
     if (document.getElementById('uxNav')) return;
     var targets = items.map(function (i) { return document.getElementById(i.id); });
-    // Players is a virtual navigation item, so it has no original mode button.
-    // All other items still require their existing buttons.
-    var modeTargets = items.slice(1).map(function (i) { return document.getElementById(i.id); });
-    if (modeTargets.some(function (t) { return !t; })) return; // fail safe: keep original UI
+    if (targets.some(function (t) { return !t; })) return; // fail safe: keep original UI
     var nav = document.createElement('nav');
     nav.id = 'uxNav';
     nav.setAttribute('aria-label', 'Main navigation');
@@ -29,19 +22,13 @@
       var b = document.createElement('button');
       b.type = 'button'; b.className = 'ux-nav-item';
       b.innerHTML = '<span class="ux-ico">' + it.ico + '</span><span>' + it.label + '</span>';
-      b.addEventListener('click', function () {
-        if (typeof it.action === 'function') it.action();
-        else if (targets[idx]) targets[idx].click();
-        setTimeout(sync, 0);
-      });
+      b.addEventListener('click', function () { targets[idx].click(); setTimeout(sync, 0); });
       nav.appendChild(b);
       return b;
     });
     document.body.appendChild(nav);
     function sync() {
-      targets.forEach(function (t, i) {
-        btns[i].classList.toggle('active', !!(t && t.classList.contains('active')));
-      });
+      targets.forEach(function (t, i) { btns[i].classList.toggle('active', t.classList.contains('active')); });
     }
     var mo = new MutationObserver(sync);
     targets.forEach(function (t) { mo.observe(t, { attributes: true, attributeFilter: ['class'] }); });
