@@ -1,6 +1,6 @@
-const CACHE_NAME = 'b-chess-shell-v3-mobile';
+const CACHE_NAME = 'b-chess-shell-v4-ux';
 const APP_SHELL = [
-  './', './index.html', './style.css', './script.js', './books_data.js',
+  './', './index.html', './style.css', './ux.css', './script.js', './books_data.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
   './pieces/wb.png', './pieces/bp.png', './pieces/wk.png', './pieces/wq.png',
   './pieces/wp.png', './pieces/bn.png', './pieces/wn.png', './pieces/wr.png',
