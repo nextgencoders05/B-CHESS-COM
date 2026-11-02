@@ -212,3 +212,115 @@ body.ux-nav-ready .mode-selector{display:none}   /* originals stay in DOM and ar
   .skill-modal-window{width:100%;max-width:100%;padding:16px}
 }
 @media (max-width:390px){.player-name{font-size:13px!important}.chess-clock{min-width:70px;font-size:18px!important}}
+
+/* =========================================================
+   MOBILE UI v2  (phones <= 700px)
+   ========================================================= */
+@media (max-width:700px){
+  html,body{overscroll-behavior-y:none}
+  body{padding-top:max(6px,env(safe-area-inset-top))!important}
+
+  /* --- Header: compact, one tidy block --- */
+  .top-bar{display:grid!important;grid-template-columns:1fr;gap:8px;padding:8px 10px!important;border-radius:10px}
+  .brand{gap:8px}
+  .pawn-icon{font-size:24px!important}
+  .brand h1{font-size:17px!important}
+  .player-search-wrap{order:0;width:100%}
+  .player-search-box{background:var(--panel-2)!important;border:1px solid var(--line)!important;border-radius:10px!important;padding:0 10px!important;min-height:40px;box-shadow:none!important}
+  .player-search-input{border:0!important;background:transparent!important;box-shadow:none!important;min-height:38px;padding-left:4px!important}
+  .player-search-icon{opacity:.7}
+  .theme-controls{gap:6px!important}
+  .theme-controls>.pill-btn{min-height:36px;font-size:12px!important}
+  .user-profile-widget{background:var(--panel-2)!important;border-color:var(--line)!important;flex:0 0 auto}
+  .rating-badge-pill{background:var(--green)!important;color:#fff!important}
+
+  /* --- Mode bar: only show when it holds extra controls --- */
+  .mode-bar{padding:0!important;border:0!important;background:transparent!important;margin-bottom:6px!important;gap:0}
+  .bot-controls{background:var(--panel-2);border:1px solid var(--line)!important;border-radius:10px;padding:10px!important;margin-bottom:8px;gap:8px!important}
+  #botControls{display:grid;grid-template-columns:1fr 1fr;align-items:end}
+  #botControls[style*="display: none"]{display:none!important}
+  #botControls .bot-setting{flex-direction:column;align-items:stretch;gap:4px}
+  #botControls .styled-select{width:100%;min-height:42px}
+  #botControls #startBotGameBtn{grid-column:1/-1;min-height:46px;font-size:15px}
+  .friend-controls-box .friend-btn-row{gap:8px!important}
+  .friend-controls-box .pill-btn{min-height:44px}
+  #createRoomBtn{grid-column:1/-1;font-size:15px}
+  .active-room-header{display:grid!important;grid-template-columns:1fr 1fr;gap:6px!important}
+  .active-room-header .room-code-tag{grid-column:1/-1;text-align:center}
+  .active-room-header .pill-btn{min-height:42px}
+
+  /* --- Board: edge to edge, slim eval bar --- */
+  .board-card{padding:6px!important}
+  .board-and-eval{gap:4px!important}
+  .eval-bar-container{width:10px!important;min-width:10px!important;border-radius:3px!important}
+  .eval-bar-score{display:none}
+  .board-relative-box{width:calc(100% - 14px)!important;max-width:none!important}
+  .board-wrapper{border-radius:3px!important;box-shadow:none}
+
+  /* --- Move strip (moved above the board by ux.js) --- */
+  #quickHistoryBox{background:var(--panel-2)!important;padding:4px 8px!important;min-height:0!important;max-height:none!important;border-radius:8px!important;margin:0 0 6px}
+  #quickHistoryBox>.label{display:none}
+  #quickMoveHistory{display:flex!important;overflow-x:auto;white-space:nowrap;gap:2px;scrollbar-width:none;padding:2px 0;-webkit-overflow-scrolling:touch}
+  #quickMoveHistory::-webkit-scrollbar{display:none}
+  #quickMoveHistory .move-list-empty{padding:4px 0;font-size:12px;text-align:left}
+  #quickMoveHistory .move-row{display:flex!important;flex:0 0 auto;gap:4px;padding:4px 8px!important;background:transparent!important;font-size:13px!important;border-radius:6px}
+  #quickMoveHistory .move-row span.move-num{color:var(--muted);margin-right:0}
+  #quickMoveHistory .move-badge{display:none}
+
+  /* --- Player bars --- */
+  .captured-bar{min-height:44px!important;padding:2px 2px!important}
+  .player-dot{width:30px!important;height:30px!important;flex-basis:30px!important}
+  .captured-img{width:16px!important;height:16px!important}
+
+  /* --- Board controls: Play Best full width, 4 equal buttons --- */
+  .board-controls{grid-template-columns:repeat(4,1fr)!important;gap:6px!important;margin-top:6px!important}
+  .board-controls #playBestBtn{grid-column:1/-1!important;order:-1;min-height:50px;font-size:16px!important}
+  .board-controls .control-btn{min-height:48px;font-size:12px!important;padding:6px 2px!important}
+
+  /* --- Analysis card --- */
+  .analysis-card{padding:8px!important}
+  .tabs{margin:0 -8px 10px;padding:0 8px!important}
+  .stats-grid{grid-template-columns:1fr 1fr!important;gap:8px!important}
+  .best-move-box h2{font-size:24px!important}
+  .panel-box.action-box{background:transparent!important;border:0!important;padding:0!important}
+  .copy-analysis-btn{width:100%;min-height:48px;font-size:15px!important}
+  .fen-input-row{gap:8px}
+  .history-box{max-height:none}
+
+  /* --- Install banner: above the bottom bar, compact, never covers header --- */
+  .pwa-install-banner.mobile-install-banner{top:auto!important;bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 8px)!important;
+    min-height:0!important;padding:8px 10px!important;border-radius:12px!important;gap:8px!important}
+  .mobile-install-banner .pwa-install-copy span{display:none}
+  .mobile-install-banner .pwa-install-copy strong{font-size:14px!important}
+  .mobile-install-banner .pwa-install-app-icon{width:34px!important;height:34px!important;flex-basis:34px!important}
+
+  /* --- Modals become bottom sheets --- */
+  .skill-modal-overlay{align-items:flex-end!important;padding:0!important}
+  .skill-modal-window{width:100%!important;max-width:100%!important;max-height:88dvh;border-radius:18px 18px 0 0!important;
+    padding:18px 16px calc(18px + env(safe-area-inset-bottom))!important;animation:uxSheet .22s ease}
+  .skill-modal-window::before{content:'';display:block;width:40px;height:4px;border-radius:2px;background:#5a5753;margin:-6px auto 12px}
+  .skill-modal-window .pill-btn{min-height:46px}
+  .time-control-grid{grid-template-columns:1fr 1fr!important;gap:8px}
+  .promotion-grid{grid-template-columns:repeat(4,1fr)!important}
+  .promotion-choice span{font-size:34px!important}
+  .skill-level-grid{grid-template-columns:1fr!important}
+  @keyframes uxSheet{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+}
+@media (max-width:360px){
+  .board-controls .control-btn{font-size:11px!important}
+  .brand h1{font-size:15px!important}
+}
+
+/* fixes: Play Best stays green; Google button is icon-only on phones */
+.control-btn.highlight-btn{background:var(--green)!important;color:#fff!important;border:0!important;border-bottom:4px solid var(--green-shadow)!important}
+.control-btn.highlight-btn:hover{background:var(--green-hi)!important}
+.control-btn.highlight-btn:active{border-bottom-width:1px!important;transform:translateY(3px)}
+@media (max-width:700px){
+  .theme-controls>.google-login-pill{font-size:0!important;width:44px;min-width:44px;max-width:44px;padding:0!important;display:inline-flex;align-items:center;justify-content:center;overflow:hidden}
+  .theme-controls>.google-login-pill .google-icon{width:20px;height:20px}
+}
+@media (max-width:700px){
+  .theme-controls>.pill-btn:not(.google-login-pill){padding:6px 9px!important;font-size:11.5px!important}
+  .theme-controls{gap:5px!important}
+  .theme-controls>.google-login-pill{width:40px;min-width:40px;max-width:40px}
+}

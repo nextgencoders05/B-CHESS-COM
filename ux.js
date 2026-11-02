@@ -37,4 +37,24 @@
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
+
+  /* Mobile: move the "Recent Moves" box above the board as a scrolling strip (same element, same IDs). */
+  function initMoveStrip() {
+    var box = document.getElementById('quickHistoryBox');
+    var topBar = document.getElementById('topCapturedBar');
+    var list = document.getElementById('quickMoveHistory');
+    if (!box || !topBar || !list) return;
+    var home = box.parentNode, next = box.nextSibling;
+    var mq = window.matchMedia('(max-width:700px)');
+    function place() {
+      if (mq.matches) { if (box.nextSibling !== topBar) topBar.parentNode.insertBefore(box, topBar); }
+      else if (box.parentNode !== home) { home.insertBefore(box, next && next.parentNode === home ? next : null); }
+    }
+    place();
+    if (mq.addEventListener) mq.addEventListener('change', place); else mq.addListener(place);
+    new MutationObserver(function () { list.scrollLeft = list.scrollWidth; })
+      .observe(list, { childList: true, subtree: true });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initMoveStrip);
+  else initMoveStrip();
 })();
