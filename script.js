@@ -43,6 +43,9 @@ let friendProfileListeners = [];
 let friendRoomData = null;
 let challengeListenerRef = null;
 let challengeNotificationMap = {};
+let previousChallengeNotificationIds = new Set();
+let challengeNotificationReady = false;
+let browserNotificationPermissionAsked = false;
 let friendResultData = null;
 let isWaitingForOpponent = false;
 let waitingChallengeTargetId = null;
@@ -199,6 +202,9 @@ auth.onAuthStateChanged(async (user) => {
   } else {
     if (challengeListenerRef) { challengeListenerRef.off(); challengeListenerRef = null; }
     challengeNotificationMap = {};
+    previousChallengeNotificationIds = new Set();
+    challengeNotificationReady = false;
+    browserNotificationPermissionAsked = false;
     currentUserId = null;
     currentUserName = "Player";
     currentUserPhoto = "";
@@ -396,7 +402,13 @@ function createFriendRoomWithTime(timeSeconds, challengeFriendId = null, challen
     listenToRoom(code, true);
     startVoiceChat(code, true);
     if (challengeFriendId) {
-      database.ref('users/' + challengeFriendId + '/challenges/' + code).set({fromId: currentUserId, fromName: currentUserName, fromRating: currentUserRating, fromPhoto: currentUserPhoto || '', timeControl: friendTimeControl, timeLabel: friendTimeLabel(friendTimeControl), createdAt: firebase.database.ServerValue.TIMESTAMP});
+      database.ref('users/' + challengeFriendId + '/challenges/' + code).set({fromId: currentUserId, fromName: currentUserName, fromRating: currentUserRating, fromPhoto: currentUserPhoto || '', timeControl: friendTimeControl, timeLabel: friendTimeLabel(friendTimeControl), createdAt: firebase.database.ServerValue.TIMESTAMP})
+        .then(() => showChallengeToast({
+          fromName: 'Challenge sent',
+          fromRating: 0,
+          timeLabel: 'Waiting for ' + (challengeFriendName || 'opponent')
+        }))
+        .catch(err => console.warn('Challenge notification write failed:', err));
     }
   });
 }
@@ -843,12 +855,134 @@ function closeFriendMatchResult() {
   if (panel) panel.style.display = 'none';
 }
 
+
+// ============================================================
+// MOBILE CHALLENGE NOTIFICATIONS
+// - Shows an immediate in-app toast when a new challenge arrives.
+// - Uses the browser/PWA Notification API when permission is available.
+// - Clicking the notification focuses the app and opens the challenge list.
+// Note: true notifications while the app/browser is completely closed require
+// Firebase Cloud Messaging (FCM) + a trusted server/Cloud Function. This
+// client-side fix handles foreground/background-tab/PWA states without
+// exposing any server credentials.
+// ============================================================
+function escapeNotificationText(value) {
+  return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+}
+
+function showChallengeToast(challenge) {
+  const name = escapeNotificationText(challenge && challenge.fromName) || 'A player';
+  const isSent = name === 'Challenge sent';
+  const rating = Number(challenge && challenge.fromRating) || 800;
+  const time = escapeNotificationText(challenge && (challenge.timeLabel || friendTimeLabel(challenge.timeControl))) || 'No Timer';
+
+  let toast = document.getElementById('challengeIncomingToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'challengeIncomingToast';
+    toast.className = 'challenge-incoming-toast';
+    toast.setAttribute('role', 'status');
+    document.body.appendChild(toast);
+  }
+  toast.innerHTML =
+    '<div class="challenge-toast-avatar">' +
+      (challenge && challenge.fromPhoto
+        ? '<img src="' + escapeHtml(challenge.fromPhoto) + '" alt="">'
+        : escapeHtml(name.charAt(0).toUpperCase())) +
+    '</div>' +
+    '<div class="challenge-toast-copy">' +
+      '<strong>' + (isSent ? 'Challenge sent' : escapeHtml(name) + ' challenged you') + '</strong>' +
+      '<span>' + (isSent ? escapeHtml(time) : rating + ' Elo • ' + escapeHtml(time)) + '</span>' +
+    '</div>' +
+    '<button type="button" class="challenge-toast-open">View</button>' +
+    '<button type="button" class="challenge-toast-close" aria-label="Close">×</button>';
+
+  toast.querySelector('.challenge-toast-open').onclick = () => {
+    toast.remove();
+    openChallengeNotifications();
+  };
+  toast.querySelector('.challenge-toast-close').onclick = () => toast.remove();
+  requestAnimationFrame(() => toast.classList.add('show'));
+
+  clearTimeout(window.__bChessChallengeToastTimer);
+  window.__bChessChallengeToastTimer = setTimeout(() => {
+    if (toast && toast.isConnected) toast.classList.remove('show');
+    setTimeout(() => { if (toast && toast.isConnected) toast.remove(); }, 300);
+  }, 9000);
+}
+
+async function requestChallengeNotificationPermission() {
+  if (!('Notification' in window)) return 'unsupported';
+  if (Notification.permission === 'granted') return 'granted';
+  if (Notification.permission === 'denied') return 'denied';
+  if (browserNotificationPermissionAsked) return Notification.permission;
+  browserNotificationPermissionAsked = true;
+  try {
+    return await Notification.requestPermission();
+  } catch (_) {
+    return Notification.permission;
+  }
+}
+
+async function showNativeChallengeNotification(challenge, code) {
+  if (!('Notification' in window)) return;
+  if (Notification.permission !== 'granted') return;
+
+  const name = escapeNotificationText(challenge && challenge.fromName) || 'A player';
+  const rating = Number(challenge && challenge.fromRating) || 800;
+  const time = escapeNotificationText(challenge && (challenge.timeLabel || friendTimeLabel(challenge.timeControl))) || 'No Timer';
+
+  try {
+    const notification = new Notification('B Chess — New Challenge', {
+      body: name + ' challenged you • ' + rating + ' Elo • ' + time,
+      icon: 'icons/icon-192.png',
+      badge: 'icons/icon-192.png',
+      tag: 'bchess-challenge-' + code,
+      renotify: true,
+      requireInteraction: true
+    });
+    notification.onclick = () => {
+      try { window.focus(); } catch (_) {}
+      openChallengeNotifications();
+      notification.close();
+    };
+  } catch (_) {}
+}
+
+async function handleNewChallengeNotification(code, challenge) {
+  showChallengeToast(challenge);
+
+  // If the tab/PWA is hidden, show the native notification immediately.
+  // If it is visible, show it too because the user explicitly asked for a
+  // direct phone-style notification.
+  let permission = ('Notification' in window) ? Notification.permission : 'unsupported';
+  if (permission === 'default') permission = await requestChallengeNotificationPermission();
+  if (permission === 'granted') await showNativeChallengeNotification(challenge, code);
+}
+
 function startChallengeNotifications() {
   if (!currentUserId) return;
   if (challengeListenerRef) challengeListenerRef.off();
+
   challengeListenerRef = database.ref('users/' + currentUserId + '/challenges');
   challengeListenerRef.on('value', snap => {
-    challengeNotificationMap = snap.val() || {};
+    const nextMap = snap.val() || {};
+    const nextIds = new Set(Object.keys(nextMap));
+
+    // On first load, do not notify for old pending challenges.
+    if (!challengeNotificationReady) {
+      previousChallengeNotificationIds = nextIds;
+      challengeNotificationReady = true;
+    } else {
+      nextIds.forEach(code => {
+        if (!previousChallengeNotificationIds.has(code)) {
+          handleNewChallengeNotification(code, nextMap[code]);
+        }
+      });
+      previousChallengeNotificationIds = nextIds;
+    }
+
+    challengeNotificationMap = nextMap;
     renderChallengeNotifications();
   });
 }

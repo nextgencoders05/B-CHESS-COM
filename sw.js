@@ -1,4 +1,4 @@
-const CACHE_NAME = 'b-chess-shell-v7-scrollfix';
+const CACHE_NAME = 'b-chess-shell-v8-challenge-notify-navfix';
 const APP_SHELL = [
   './', './index.html', './style.css', './ux.css', './ux.js', './script.js', './books_data.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
