@@ -2,13 +2,33 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b171b" />
+  <meta name="description" content="B Chess Analyzer - analyze games, play chess and explore openings." />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" type="image/png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <title>B Chess Analyzer</title>
   <!-- Chessboard.js CSS -->
   <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <!-- Mobile/Desktop PWA install prompt -->
+  <aside id="pwaInstallBanner" class="pwa-install-banner" role="dialog" aria-label="Install B Chess Analyzer" hidden>
+    <div class="pwa-install-app-icon">
+      <img src="icons/icon-192.png" alt="" />
+    </div>
+    <div class="pwa-install-copy">
+      <strong>♟ Install B Chess</strong>
+      <span>Get the mobile app on your Home Screen — full screen, faster access and app-like experience.</span>
+    </div>
+    <button type="button" id="pwaInstallBtn" class="pill-btn highlight-btn pwa-install-action">Install</button>
+    <button type="button" id="pwaInstallDismiss" class="pwa-install-dismiss" aria-label="Close install prompt">×</button>
+  </aside>
   <div class="app-container">
     <!-- Top Header -->
     <header class="top-bar">
@@ -582,5 +602,6 @@
 
   <!-- Remote WebRTC Voice Chat Audio Element -->
   <audio id="remoteAudio" autoplay playsinline></audio>
+  <script src="pwa.js"></script>
 </body>
 </html>
