@@ -538,7 +538,8 @@ function updateTimeControlUI() {
   const w = document.getElementById('whiteClock');
   const b = document.getElementById('blackClock');
   const names = { 600: 'Rapid • 10 min', 300: 'Blitz • 5 min', 60: 'Bullet • 1 min', 0: 'No Timer' };
-  if (label) label.textContent = '⏱ ' + (names[friendTimeControl] || 'No Timer');
+  const quickLabel = currentRoomCode && friendRoomData && friendRoomData.quickLabel;
+  if (label) label.textContent = '⏱ ' + (quickLabel || names[friendTimeControl] || 'No Timer');
   const show = friendTimeControl > 0;
   if (w) w.style.display = show ? 'block' : 'none';
   if (b) b.style.display = show ? 'block' : 'none';
@@ -625,6 +626,10 @@ function handleFriendTimeout(color) {
 function commitClockAfterMove(nextTurn) {
   if (!friendTimeControl || !currentRoomCode) return null;
   const left = snapshotFriendClock();
+  const increment = Number(friendRoomData && friendRoomData.increment) || 0;
+  if (increment > 0 && left.whiteTimeLeft > 0 && left.blackTimeLeft > 0) {
+    if (nextTurn === 'b') left.whiteTimeLeft += increment; else left.blackTimeLeft += increment;
+  }
   return {
     whiteTimeLeft: left.whiteTimeLeft,
     blackTimeLeft: left.blackTimeLeft,
@@ -692,6 +697,7 @@ function cancelWaitingChallenge() {
 }
 
 function cleanupFriendGame(resetMode = true) {
+  const wasQuickRoom = typeof qmOnRoomCleanup === 'function' ? qmOnRoomCleanup() : false;
   stopQuickMatchSearch();
   endQuickBotGame();
   setWaitingForOpponent(false);
@@ -717,7 +723,7 @@ function cleanupFriendGame(resetMode = true) {
   const codeInput = document.getElementById('roomCodeInput');
   if (codeInput) codeInput.value = '';
   lockModeButtons(false);
-  if (resetMode) setGameMode('friend');
+  if (resetMode) setGameMode(wasQuickRoom ? 'quick' : 'friend');
 }
 
 function copyRoomCode() {
@@ -746,7 +752,8 @@ function listenToRoom(code, isCreator) {
     }
 
     if (val.guestName) {
-      if (friendTimeControl > 0 && val.guestId && val.guestName && !val.clockStartedAt && !val.gameOver) {
+      const quickReady = !val.quickMatch || (typeof qmBothPlayersPresent === 'function' && qmBothPlayersPresent(val));
+      if (friendTimeControl > 0 && val.guestId && val.guestName && !val.clockStartedAt && !val.gameOver && quickReady) {
         roomRef.transaction((current) => {
           if (!current || current.gameOver || !current.guestId || current.clockStartedAt) return;
           return Object.assign({}, current, {
@@ -852,7 +859,8 @@ function showFriendMatchResult(roomValue, code) {
   const white = { id: roomValue.creatorId, name: roomValue.creatorName || 'White', rating: Number(roomValue.creatorRating || 800) };
   const black = { id: roomValue.guestId, name: roomValue.guestName || 'Black', rating: Number(roomValue.guestRating || 800) };
   const winnerId = roomValue.winner || null;
-  const isDraw = roomValue.result === 'draw';
+  const isAborted = roomValue.result === 'aborted';
+  const isDraw = roomValue.result === 'draw' || isAborted;
   const winner = winnerId === white.id ? white : winnerId === black.id ? black : null;
   const loser = winnerId === white.id ? black : winnerId === black.id ? white : null;
   const me = currentUserId === white.id ? white : black;
@@ -862,13 +870,13 @@ function showFriendMatchResult(roomValue, code) {
 
   const panel = document.getElementById('friendMatchResultPanel');
   if (!panel) return;
-  const resultTitle = isDraw ? 'DRAW' : (winnerId === currentUserId ? 'YOU WON' : 'YOU LOST');
-  const resultSub = isDraw ? 'The game ended in a draw.' : `${winner.name} defeated ${loser.name}`;
+  const resultTitle = isAborted ? 'ABORTED' : isDraw ? 'DRAW' : (winnerId === currentUserId ? 'YOU WON' : 'YOU LOST');
+  const resultSub = isAborted ? 'Your opponent did not connect. The game was cancelled (no rating change).' : isDraw ? 'The game ended in a draw.' : `${winner.name} defeated ${loser.name}`;
   const resultClass = isDraw ? 'draw' : (winnerId === currentUserId ? 'win' : 'loss');
   panel.innerHTML = `
     <button type="button" id="resultCloseBtn" class="result-close-btn" title="Close" aria-label="Close result">✕</button>
     <div class="friend-result-card ${resultClass}">
-      <div class="friend-result-kicker">${escapeHtml(friendTimeLabel(roomValue.timeControl))}</div>
+      <div class="friend-result-kicker">${escapeHtml(roomValue.quickLabel || friendTimeLabel(roomValue.timeControl))}</div>
       <div class="friend-result-title">${resultTitle}</div>
       <div class="friend-result-sub">${escapeHtml(resultSub)}</div>
       <div class="friend-result-players">
@@ -885,7 +893,7 @@ function showFriendMatchResult(roomValue, code) {
       </div>
       <div class="friend-result-actions">
         <button id="resultReviewBtn" class="pill-btn highlight-btn">📊 View Analysis</button>
-        <button id="resultRematchBtn" class="pill-btn">♟ Rematch</button>
+        <button id="resultRematchBtn" class="pill-btn">${roomValue.quickMatch ? '⚡ New Quick Match' : '♟ Rematch'}</button>
         <button id="resultFriendsBtn" class="pill-btn">👥 Friends</button>
       </div>
     </div>`;
@@ -898,9 +906,9 @@ function showFriendMatchResult(roomValue, code) {
   if (reviewBtn) reviewBtn.onclick = () => { panel.style.display='none'; document.querySelector('[data-tab="reviewTab"]')?.click(); };
   if (rematchBtn) rematchBtn.onclick = () => {
     panel.style.display='none';
-    const quickTc = roomValue.quickMatch ? friendResultData.timeControl : null;
-    cleanupFriendGame(true);
-    if (quickTc) beginQuickMatchSearch(quickTc);
+    const quickKey = roomValue.quickMatch ? (roomValue.quickKey || null) : null;
+    cleanupFriendGame(!quickKey);
+    if (quickKey && typeof qmRematch === 'function') qmRematch(quickKey);
     else if (friendResultData.opponentId) sendChallenge(friendResultData.opponentId, friendResultData.opponentName, friendResultData.timeControl);
   };
   if (friendsBtn) friendsBtn.onclick = () => { panel.style.display='none'; cleanupFriendGame(true); openFriendsModal('friends'); };
@@ -1125,6 +1133,7 @@ function friendTimeLabel(seconds) {
 
 function saveFriendMatchHistory(roomValue, code) {
   if (!roomValue || !currentUserId || !roomValue.creatorId || !roomValue.guestId || friendHistorySavedCodes.has(code)) return;
+  if (roomValue.result === 'aborted') return;
   friendHistorySavedCodes.add(code);
   const iAmWhite = roomValue.creatorId === currentUserId;
   const opponentId = iAmWhite ? roomValue.guestId : roomValue.creatorId;
@@ -1140,7 +1149,7 @@ function saveFriendMatchHistory(roomValue, code) {
     resultType: roomValue.result || 'unknown',
     winnerId: roomValue.winner || null,
     timeControl: Number(roomValue.timeControl) || 0,
-    timeLabel: friendTimeLabel(roomValue.timeControl),
+    timeLabel: roomValue.quickLabel || friendTimeLabel(roomValue.timeControl),
     moves: roomValue.moveHistory || game.history(),
     playedAt: firebase.database.ServerValue.TIMESTAMP
   };
@@ -2458,6 +2467,7 @@ function applyHumanMove(source, target, promotion = 'q') {
 // Drag & Drop Handlers
 function onDragStart(source, piece) {
   if (isWaitingForOpponent) return false;
+  if (currentMode === 'quick') return false;
   if (quickBot && quickBot.over) return false;
   if (game.game_over()) return false;
   if (isBotThinking) return false;
@@ -2516,6 +2526,7 @@ function onSnapEnd() {
 // Universal Click & Touch handler for mobile & desktop
 function handleSquareClick(square) {
   if (isWaitingForOpponent) return;
+  if (currentMode === 'quick') return;
   if (quickBot && quickBot.over) return;
   if (game.game_over() || isBotThinking) return;
 
@@ -2891,10 +2902,32 @@ function setGameMode(mode) {
   const friendControls = document.getElementById('friendControls');
   const playBestBtn = document.getElementById('playBestBtn');
   const chatTabBtn = document.getElementById('chatTabBtn');
+  // Quick Match page (features.js). Hidden in every other mode.
+  const quickBtn = document.getElementById('modeQuickBtn');
+  const quickControls = document.getElementById('quickMatchControls');
+  if (quickBtn) quickBtn.classList.toggle('active', mode === 'quick');
+  if (quickControls) quickControls.style.display = mode === 'quick' ? 'flex' : 'none';
 
   if (botBtn) botBtn.classList.toggle('active', mode === 'bot');
   if (analyzeBtn) analyzeBtn.classList.toggle('active', mode === 'analysis');
   if (friendBtn) friendBtn.classList.toggle('active', mode === 'friend');
+
+  if (mode === 'quick') {
+    ['undoBtn', 'redoBtn', 'resetBtn'].forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    if (botControls) botControls.style.display = 'none';
+    if (friendControls) friendControls.style.display = 'none';
+    if (chatTabBtn) chatTabBtn.style.display = 'none';
+    if (playBestBtn) playBestBtn.style.display = 'none';
+    document.getElementById('panelPrimaryLabel').textContent = 'Quick Match';
+    document.getElementById('bestMoveText').textContent = '⚡ Quick Match';
+    document.getElementById('engineSubtext').textContent = 'Choose a time control and press Find Opponent.';
+    document.getElementById('pvLineText').textContent = 'Play a random online opponent with the same time control.';
+    document.getElementById('bestMoveArrow').setAttribute('visibility', 'hidden');
+    updateEvalBar(0, '0.0');
+    try { if (stockfish) stockfish.postMessage('stop'); } catch (_) {}
+    clearHighlights();
+    return;
+  }
 
   if (mode === 'bot') {
     const undoBtn = document.getElementById('undoBtn');
@@ -3139,7 +3172,7 @@ $(document).ready(function() {
   const createBtn = document.getElementById('createRoomBtn');
   if (createBtn) createBtn.addEventListener('click', createFriendRoom);
   const quickMatchBtn = document.getElementById('quickMatchBtn');
-  if (quickMatchBtn) quickMatchBtn.addEventListener('click', startQuickMatch);
+  if (quickMatchBtn) quickMatchBtn.addEventListener('click', () => (typeof openQuickMatchPage === 'function' ? openQuickMatchPage() : startQuickMatch()));
   ['topMicBtn', 'bottomMicBtn'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('click', () => { if (!el.disabled) toggleMicrophone(); });
@@ -3639,6 +3672,7 @@ function renderBooksPanels() {
   Object.keys(map).forEach(cat => {
     const el = document.getElementById(map[cat]);
     if (!el) return;
+    if (cat === 'other' && typeof renderLearningMaterialsPanel === 'function') { renderLearningMaterialsPanel(); return; }
     const items = BOOKS_DATA[cat] || [];
     if (items.length && items[0].moves) {
       el.innerHTML = `<input type="text" class="profile-input books-filter" data-books-filter="${cat}" placeholder="Search ${titles[cat].toLowerCase()}..." autocomplete="off" />
@@ -3842,7 +3876,7 @@ $(document).ready(function() {
     }, 1200);
   });
   // Leaving analysis or resetting ends the review so it never interferes with other modes
-  ['modeBotBtn', 'modeFriendBtn', 'resetBtn'].forEach(id => b(id, closeOpeningReview));
+  ['modeQuickBtn', 'modeBotBtn', 'modeFriendBtn', 'resetBtn'].forEach(id => b(id, closeOpeningReview));
 });
 
 // =====================================================================

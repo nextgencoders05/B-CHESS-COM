@@ -1,7 +1,7 @@
-/* BCHESS_BUILD_VERSION: 2026-11-04-quickmatch-mic-challenge */
-const CACHE_NAME = 'b-chess-shell-v8-quickmatch';
+/* BCHESS_BUILD_VERSION: 2026-11-05-quickmatch-learning-admin */
+const CACHE_NAME = 'b-chess-shell-v9-quickmatch-admin';
 const APP_SHELL = [
-  './', './index.html', './style.css', './ux.css', './ux.js', './script.js', './books_data.js', './pwa.js',
+  './', './index.html', './style.css', './ux.css', './ux.js', './script.js', './features.js', './features.css', './books_data.js', './pwa.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
   './pieces/wb.png', './pieces/bp.png', './pieces/wk.png', './pieces/wq.png',
   './pieces/wp.png', './pieces/bn.png', './pieces/wn.png', './pieces/wr.png',

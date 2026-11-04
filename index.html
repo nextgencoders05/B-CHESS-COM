@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css" />
   <link rel="stylesheet" href="style.css" />
   <link rel="stylesheet" href="ux.css" />
+  <link rel="stylesheet" href="features.css" />
 </head>
 <body>
   <!-- Mobile/Desktop PWA install prompt -->
@@ -84,6 +85,7 @@
           <div class="mode-selector">
             <span class="mode-label">Mode:</span>
             <div class="mode-buttons">
+              <button id="modeQuickBtn" class="mode-btn">⚡ Quick Match</button>
               <button id="modeBotBtn" class="mode-btn">Play vs Bot</button>
               <button id="modeFriendBtn" class="mode-btn">Play with Friend</button>
               <button id="modeAnalyzeBtn" class="mode-btn active">Free Analysis</button>
@@ -111,6 +113,8 @@
             </div>
             <button id="startBotGameBtn" class="pill-btn bot-action-btn">New Game</button>
           </div>
+          <!-- Quick Match page (rendered by features.js) -->
+          <div id="quickMatchControls" class="bot-controls quick-match-box" style="display: none;" aria-live="polite"></div>
           <!-- Play with Friend Controls -->
           <div id="friendControls" class="bot-controls friend-controls-box" style="display: none;">
             <div class="friend-btn-row">
@@ -402,6 +406,8 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
   <script src="books_data.js"></script>
   <script src="script.js"></script>
 
@@ -611,5 +617,68 @@
   <audio id="remoteAudio" autoplay playsinline></audio>
   <script src="pwa.js"></script>
   <script src="ux.js"></script>
+
+  <!-- Hidden Admin Login (Ctrl + Arrow Up, or tap the ♟ logo 5 times) -->
+  <div id="adminLoginModal" class="skill-modal-overlay admin-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="adminLoginTitle">
+    <div class="skill-modal-window admin-login-window">
+      <button type="button" id="adminLoginCloseX" class="books-close-x" aria-label="Close" title="Close">×</button>
+      <div class="modal-chess-icon">🔐</div>
+      <h2 id="adminLoginTitle">Admin Login</h2>
+      <p class="modal-subtext">Verify with your registered mobile number to continue.</p>
+      <div id="adminStepPhone">
+        <label class="profile-field-label" for="adminPhoneInput">Mobile Number</label>
+        <div class="admin-phone-row">
+          <span class="admin-cc" aria-label="Country code">+91</span>
+          <input id="adminPhoneInput" class="profile-input" type="tel" inputmode="numeric" maxlength="10" autocomplete="tel-national" placeholder="10-digit mobile number" />
+        </div>
+        <button type="button" id="adminSendOtpBtn" class="pill-btn highlight-btn admin-wide-btn">Send OTP</button>
+      </div>
+      <div id="adminStepOtp" style="display:none;">
+        <div id="adminOtpSentTo" class="admin-otp-sent"></div>
+        <label class="profile-field-label" for="adminOtpInput">6-Digit OTP</label>
+        <input id="adminOtpInput" class="profile-input admin-otp-input" type="text" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="••••••" />
+        <button type="button" id="adminVerifyOtpBtn" class="pill-btn highlight-btn admin-wide-btn">Verify OTP</button>
+        <div class="admin-otp-links">
+          <button type="button" id="adminResendOtpBtn" class="admin-link-btn" disabled>Resend OTP</button>
+          <button type="button" id="adminChangeNumberBtn" class="admin-link-btn">Change number</button>
+        </div>
+      </div>
+      <div id="adminLoginMsg" class="admin-msg" role="status" aria-live="polite"></div>
+      <div id="adminRecaptchaHolder"><div id="adminRecaptcha"></div></div>
+      <p class="admin-fine-print">Protected by reCAPTCHA and server-side verification.</p>
+    </div>
+  </div>
+
+  <!-- Admin Dashboard (data loads only after the backend confirms the admin session) -->
+  <div id="adminDashboard" class="admin-dashboard-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="adminDashTitle">
+    <div class="admin-dashboard">
+      <header class="admin-dash-head">
+        <div><span class="admin-dash-kicker">♟ B Chess Analyzer</span><h2 id="adminDashTitle">Admin Dashboard</h2></div>
+        <div class="admin-dash-user"><span id="adminDashPhone"></span><button type="button" id="adminLogoutBtn" class="pill-btn signout-pill">Logout</button></div>
+      </header>
+      <section class="admin-section">
+        <h3>📚 Learning Materials Management</h3>
+        <div id="adminStats" class="admin-stats"></div>
+        <form id="adminMaterialForm" class="admin-form" novalidate>
+          <h4 id="adminFormTitle">Add New Learning Material</h4>
+          <label class="profile-field-label" for="adminMatTitle">Title</label>
+          <input id="adminMatTitle" class="profile-input" type="text" maxlength="120" placeholder="e.g. King's Gambit" autocomplete="off" />
+          <label class="profile-field-label" for="adminMatUrl">URL</label>
+          <input id="adminMatUrl" class="profile-input" type="url" maxlength="500" placeholder="https://www.instagram.com/reel/..." autocomplete="off" />
+          <label class="profile-field-label" for="adminMatType">Resource Type</label>
+          <select id="adminMatType" class="styled-select admin-select"><option value="video">Video</option></select>
+          <label class="admin-check"><input type="checkbox" id="adminMatPublished" checked /> Published (visible to users)</label>
+          <div class="admin-form-actions">
+            <button type="submit" id="adminSaveBtn" class="pill-btn highlight-btn">💾 Save</button>
+            <button type="button" id="adminCancelEditBtn" class="pill-btn" style="display:none;">Cancel Edit</button>
+          </div>
+          <div id="adminFormMsg" class="admin-msg" role="status" aria-live="polite"></div>
+        </form>
+        <div class="admin-list-head"><h4>All Materials</h4><input id="adminMatFilter" class="profile-input" type="search" placeholder="Search materials…" autocomplete="off" /></div>
+        <div id="adminMaterialsList" class="admin-materials-list"></div>
+      </section>
+    </div>
+  </div>
+  <script src="features.js"></script>
 </body>
 </html>

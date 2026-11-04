@@ -1,0 +1,19 @@
+{
+  "name": "bchess-functions",
+  "description": "B Chess Analyzer - Cloud Functions (Quick Match, learning-material ratings, admin)",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "check": "node --check index.js && node --check scripts/grant-admin.js",
+    "deploy": "firebase deploy --only functions,firestore",
+    "grant-admin": "node scripts/grant-admin.js",
+    "test:emulator": "cd .. && firebase emulators:exec --config firebase.emulator.json --project demo-bchess --only auth,firestore,database,functions \"node functions/test/emulator.test.js\""
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.1.0"
+  }
+}

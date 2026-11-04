@@ -1,0 +1,13 @@
+{
+  "firestore": { "rules": "firestore.rules" },
+  "database": { "rules": "functions/test/database.rules.test.json" },
+  "functions": [{ "source": "functions", "codebase": "default", "ignore": ["node_modules", "test", "scripts"] }],
+  "emulators": {
+    "auth": { "port": 9099 },
+    "firestore": { "port": 8080 },
+    "database": { "port": 9000 },
+    "functions": { "port": 5001 },
+    "ui": { "enabled": false },
+    "singleProjectMode": true
+  }
+}

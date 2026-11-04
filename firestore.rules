@@ -1,0 +1,56 @@
+rules_version = '2';
+
+// B Chess Analyzer — Cloud Firestore Security Rules
+// All writes to learning materials, ratings, matchmaking and admin data go through
+// Cloud Functions (Firebase Admin SDK), which validate everything server-side.
+// Clients can only read what they are allowed to see.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    // Admin = custom claim set with the Admin SDK (scripts/grant-admin.js) AND the
+    // authorised phone number. Users cannot set custom claims themselves.
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.admin == true
+        && request.auth.token.phone_number == '+918838718613'
+        && request.auth.token.firebase.sign_in_provider == 'phone';
+    }
+
+    // Learning materials: everyone can read PUBLISHED items; the admin can read all.
+    match /learningMaterials/{materialId} {
+      allow read: if resource.data.published == true || isAdmin();
+      allow write: if false; // adminSaveMaterial / adminSetPublished / adminDeleteMaterial only
+
+      // One rating per user (document id = user id). Users can read only their own.
+      match /ratings/{userId} {
+        allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+        allow write: if false; // rateMaterial function only (keeps the average consistent)
+      }
+    }
+
+    // Matchmaking queue: a player can watch only their own entry.
+    match /quickMatchQueue/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow write: if false; // quickMatchJoin / quickMatchCancel only
+    }
+
+    match /quickMatches/{matchId} {
+      allow read: if signedIn() && (request.auth.uid in resource.data.players || isAdmin());
+      allow write: if false;
+    }
+
+    // Roles live here; clients can never write them (no self-assigned admin roles).
+    match /users/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    match /admins/{userId} { allow read, write: if false; }
+    match /adminOtpRequests/{docId} { allow read, write: if false; }
+
+    // Everything else is closed.
+    match /{document=**} { allow read, write: if false; }
+  }
+}
