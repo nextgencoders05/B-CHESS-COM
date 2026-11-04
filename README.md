@@ -28,3 +28,34 @@ the button explains Safari > Share > Add to Home Screen.
 After installation, B Chess opens in standalone app mode without the normal browser tab/address
 bar. The manifest, icons and service worker are included. A normal HTTPS deployment is required
 for service-worker/PWA installation.
+
+
+## Update 2026-11-04 — Quick Match, board mic, challenge alerts
+
+- Navigation order: Vs Bot, Friend, Analyze, Books.
+- Mic ON/OFF button next to each player's name and Elo on the board. Your own bar toggles your mic;
+  the opponent's bar shows their live mic status (stored at rooms/{code}/mic/{uid}).
+- Incoming challenges pop up immediately with the challenger's name, Elo, time control, a message and
+  Accept / Decline buttons. When the app is in the background, a browser/PWA notification is shown too;
+  tapping it opens the challenge (its Accept / Decline buttons act directly).
+- When you send a challenge, the board shows "Challenge sent to [name]" with their Elo, the time control
+  and "Waiting for opponent to accept..." right away.
+- Quick Match (Friend > ⚡ Quick Match): pick Rapid / Blitz / Bullet, then the app searches for an online
+  player with the same time control and a similar Elo (±50, widening to ±400). If nobody is found within
+  about 25 seconds, the game starts against an engine opponent shown as a regular player.
+- The service worker now loads pages/scripts network-first, so a new deployment appears on the next load.
+
+Firebase Realtime Database rules: Quick Match uses a new path `matchmaking/{timeControl}/{uid}`.
+Signed-in users must be able to read `matchmaking/{timeControl}` and write entries there. Example:
+
+    "matchmaking": {
+      "$tc": {
+        ".read": "auth != null",
+        "$uid": { ".write": "auth != null" }
+      }
+    }
+
+Without this, Quick Match still works but always ends up with the engine opponent.
+
+Note: browser notifications reach a player while the app/tab is open (including in the background).
+Notifications when the app is fully closed would need Firebase Cloud Messaging and a server.

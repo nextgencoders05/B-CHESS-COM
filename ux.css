@@ -336,3 +336,26 @@ body.ux-nav-ready .mode-selector{display:none}   /* originals stay in DOM and ar
   html{overflow-y:auto!important;overflow-x:hidden!important;-webkit-overflow-scrolling:touch}
   body{overflow:visible!important}
 }
+
+/* ---------- Board mic toggle (beside each player's name & Elo) ---------- */
+.board-mic-btn{display:inline-flex;align-items:center;justify-content:center;gap:3px;margin-left:2px;padding:0 8px;height:24px;
+  border-radius:999px;border:1px solid var(--line);background:var(--panel-3);color:var(--muted);
+  font-size:11px;font-weight:800;line-height:1;white-space:nowrap;cursor:pointer;flex:0 0 auto;touch-action:manipulation}
+.board-mic-btn.on{background:rgba(129,182,76,.16);border-color:var(--green);color:var(--green-hi)}
+.board-mic-btn.mine:hover{color:#fff;border-color:var(--green)}
+.board-mic-btn:disabled{cursor:default;opacity:.9}
+
+/* ---------- Incoming challenge pop-up (same look as the challenge list) ---------- */
+.challenge-toast{position:fixed!important;top:max(12px,env(safe-area-inset-top))!important;left:0!important;right:0!important;
+  margin:0 auto;width:360px;max-width:calc(100vw - 24px);z-index:5000;animation:uxPop .18s ease}
+.challenge-toast-msg{padding:2px 4px;color:#cbd5e1;font-size:12px;line-height:1.4}
+.challenge-toast-actions{display:flex;gap:8px}
+.challenge-toast-actions button{flex:1;height:40px;border-radius:8px;border:1px solid #334155;font-size:13px;font-weight:900;cursor:pointer}
+
+/* ---------- Waiting overlay detail line (challenge sent / searching) ---------- */
+.waiting-detail{font-size:13px;font-weight:700;color:#e2e8f0}
+
+@media (max-width:700px){
+  #quickMatchBtn{grid-column:1/-1;font-size:15px}
+  .board-mic-btn{height:26px;padding:0 8px}
+}

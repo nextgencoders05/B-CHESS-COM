@@ -47,6 +47,13 @@ let friendResultData = null;
 let isWaitingForOpponent = false;
 let waitingChallengeTargetId = null;
 let selfCancellingChallenge = false;
+let boardPlayerInfo = null; // { w:{name,rating}, b:{name,rating} } while a match is on the board
+let challengeToastCode = null;
+let pendingChallengeDeepLink = null; // { code, action } from a tapped browser notification
+let serverTimeOffset = 0;
+let quickMatch = null; // active Quick Match search (see QUICK MATCH section)
+let quickBot = null;   // active Quick Match game against the fallback opponent
+database.ref('.info/serverTimeOffset').on('value', s => { serverTimeOffset = Number(s.val()) || 0; });
 
 // WebRTC Live Voice Chat State
 let peerConnection = null;
@@ -361,22 +368,12 @@ function createFriendRoom() {
   });
 }
 
-function createFriendRoomWithTime(timeSeconds, challengeFriendId = null, challengeFriendName = null) {
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
-  currentRoomCode = code;
-  myOnlineColor = 'w';
-  friendTimeControl = Number(timeSeconds) || 0;
-  friendRoomData = { creatorId: currentUserId, creatorName: currentUserName, creatorRating: currentUserRating, creatorPhoto: currentUserPhoto || '', guestId: challengeFriendId || null, guestName: challengeFriendName || null, guestRating: null, guestPhoto: '' };
-  board.orientation('white');
-  game.reset();
-  board.start();
-  lockModeButtons(true);
-  resetFriendClockUI();
-  // Match must not start until the opponent accepts.
-  waitingChallengeTargetId = challengeFriendId || null;
-  setWaitingForOpponent(true);
+function generateRoomCode() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 
-  database.ref("rooms/" + code).set({
+function buildRoomPayload(timeSeconds, extra = {}) {
+  return Object.assign({
     creatorId: currentUserId,
     creatorName: currentUserName,
     creatorRating: currentUserRating,
@@ -384,38 +381,97 @@ function createFriendRoomWithTime(timeSeconds, challengeFriendId = null, challen
     guestName: null,
     gameFen: 'start',
     status: 'waiting',
-    timeControl: friendTimeControl,
+    timeControl: Number(timeSeconds) || 0,
     gameOver: false,
-    challengeFriendId: challengeFriendId || null,
-    challengeFriendName: challengeFriendName || null,
+    challengeFriendId: null,
+    challengeFriendName: null,
     moveHistory: []
-  }).then(() => {
-    document.getElementById("activeRoomInfo").style.display = "flex";
-    document.getElementById("activeRoomCode").textContent = code;
-    updateTimeControlUI();
-    listenToRoom(code, true);
-    startVoiceChat(code, true);
+  }, extra);
+}
+
+// Local state for the room creator (White) before the room goes live.
+function prepareCreatorRoomState(code, timeSeconds, guestId = null, guestName = null) {
+  currentRoomCode = code;
+  myOnlineColor = 'w';
+  friendTimeControl = Number(timeSeconds) || 0;
+  friendRoomData = { creatorId: currentUserId, creatorName: currentUserName, creatorRating: currentUserRating, creatorPhoto: currentUserPhoto || '', guestId: guestId || null, guestName: guestName || null, guestRating: null, guestPhoto: '' };
+  board.orientation('white');
+  game.reset();
+  board.start();
+  lockModeButtons(true);
+  resetFriendClockUI();
+}
+
+function activateCreatorRoom(code) {
+  document.getElementById("activeRoomInfo").style.display = "flex";
+  document.getElementById("activeRoomCode").textContent = code;
+  updateTimeControlUI();
+  listenToRoom(code, true);
+  startVoiceChat(code, true);
+}
+
+function createFriendRoomWithTime(timeSeconds, challengeFriendId = null, challengeFriendName = null, challengeFriendRating = null) {
+  const code = generateRoomCode();
+  prepareCreatorRoomState(code, timeSeconds, challengeFriendId, challengeFriendName);
+  // Match must not start until the opponent accepts.
+  waitingChallengeTargetId = challengeFriendId || null;
+  setWaitingForOpponent(true);
+  if (challengeFriendId) showChallengeSentStatus(challengeFriendId, challengeFriendName, challengeFriendRating, friendTimeControl);
+  else setWaitingDetails('Waiting for Opponent...', 'Room ' + code + ' • ' + friendTimeLabel(friendTimeControl), 'Share the room code. The match starts once your opponent joins.');
+
+  database.ref("rooms/" + code).set(buildRoomPayload(friendTimeControl, {
+    challengeFriendId: challengeFriendId || null,
+    challengeFriendName: challengeFriendName || null
+  })).then(() => {
+    activateCreatorRoom(code);
     if (challengeFriendId) {
-      database.ref('users/' + challengeFriendId + '/challenges/' + code).set({fromId: currentUserId, fromName: currentUserName, fromRating: currentUserRating, fromPhoto: currentUserPhoto || '', timeControl: friendTimeControl, timeLabel: friendTimeLabel(friendTimeControl), createdAt: firebase.database.ServerValue.TIMESTAMP});
+      const label = friendTimeLabel(friendTimeControl);
+      database.ref('users/' + challengeFriendId + '/challenges/' + code).set({fromId: currentUserId, fromName: currentUserName, fromRating: currentUserRating, fromPhoto: currentUserPhoto || '', timeControl: friendTimeControl, timeLabel: label, message: currentUserName + ' challenged you to a ' + label + ' game!', createdAt: firebase.database.ServerValue.TIMESTAMP});
     }
   });
 }
 
-function joinFriendRoom() {
+// --- WAITING / CHALLENGE-SENT STATUS (shown on the existing waiting overlay) ---
+function setWaitingDetails(title, detail, sub) {
+  const t = document.getElementById('waitingText');
+  const d = document.getElementById('waitingDetail');
+  const s = document.getElementById('waitingSub');
+  if (t) t.textContent = title || 'Waiting for Opponent...';
+  if (d) { d.textContent = detail || ''; d.style.display = detail ? 'block' : 'none'; }
+  if (s) s.textContent = sub || '';
+}
+
+function showChallengeSentStatus(friendId, friendName, friendRating, timeSeconds) {
+  const name = friendName || 'Player';
+  const render = (rating) => setWaitingDetails(
+    'Challenge sent to ' + name,
+    name + (rating ? ' • ' + rating + ' Elo' : '') + ' • ' + friendTimeLabel(timeSeconds),
+    'Waiting for opponent to accept...'
+  );
+  render(friendRating);
+  // Use the opponent's live rating (the friends list copy can be outdated).
+  database.ref('users/' + friendId + '/rating').once('value').then(snap => {
+    const live = Number(snap.val());
+    if (live && isWaitingForOpponent && waitingChallengeTargetId === friendId) render(live);
+  }).catch(() => {});
+}
+
+function joinFriendRoom(codeOverride, onFail) {
   if (!currentUserId) {
     alert("Please Sign in with Google first!");
     return triggerGoogleLogin();
   }
   if (!requireTermsAccepted()) return;
-  const code = document.getElementById("roomCodeInput").value.trim().toUpperCase();
+  const fail = (msg) => (typeof onFail === 'function' ? onFail(msg) : alert(msg));
+  const code = (typeof codeOverride === 'string' ? codeOverride : document.getElementById("roomCodeInput").value).trim().toUpperCase();
   if (!code) return alert("Enter Room Code");
 
   const roomRef = database.ref("rooms/" + code);
   roomRef.once("value", (snap) => {
     const val = snap.val();
-    if (!val) return alert("Invalid room code!");
-    if (val.gameOver) return alert("This game has already ended.");
-    if (val.guestId && val.guestId !== currentUserId) return alert("This room already has a player.");
+    if (!val) return fail("Invalid room code!");
+    if (val.gameOver) return fail("This game has already ended.");
+    if (val.guestId && val.guestId !== currentUserId) return fail("This room already has a player.");
 
     currentRoomCode = code;
     myOnlineColor = 'b';
@@ -439,7 +495,7 @@ function joinFriendRoom() {
       if (!res.committed || !res.snapshot.val()) {
         cleanupFriendGame(false);
         board.orientation('white');
-        alert('This challenge is no longer available. It may have been cancelled.');
+        fail('This challenge is no longer available. It may have been cancelled.');
         return;
       }
       friendRoomData = Object.assign({}, val, { guestId: currentUserId, guestName: currentUserName, guestRating: currentUserRating, guestPhoto: currentUserPhoto || '', status: 'playing' });
@@ -452,9 +508,15 @@ function joinFriendRoom() {
   });
 }
 
-function showFriendTimeModal(onSelect) {
+function showFriendTimeModal(onSelect, options = {}) {
   const modal = document.getElementById('friendTimeModal');
   if (!modal) return onSelect(selectedFriendTimeControl);
+  const title = document.getElementById('friendTimeTitle');
+  const sub = document.getElementById('friendTimeSub');
+  const noTimer = modal.querySelector('[data-time-control="0"]');
+  if (title) title.textContent = options.quick ? '⚡ Quick Match' : 'Choose Time Control';
+  if (sub) sub.textContent = options.quick ? 'Choose a time control. We will find an online opponent near your rating.' : 'Select how long each player gets for the game.';
+  if (noTimer) noTimer.style.display = options.quick ? 'none' : '';
   modal.style.display = 'flex';
   modal.__onSelect = onSelect;
 }
@@ -573,6 +635,12 @@ function commitClockAfterMove(nextTurn) {
 
 function leaveFriendGame() {
   if (isWaitingForOpponent) { cancelWaitingChallenge(); return; }
+  if (quickBot) {
+    if (quickBot.over) { closeResultAndExitRoom(); return; }
+    if (!confirm('Leave this game? Your current game will be abandoned.')) return;
+    finishQuickBotGame('left', quickBot.botColor);
+    return;
+  }
   if (!currentRoomCode) {
     setGameMode('friend');
     return;
@@ -596,10 +664,13 @@ function setWaitingForOpponent(waiting) {
   const overlay = document.getElementById('waitingOverlay');
   if (overlay) overlay.style.display = waiting ? 'flex' : 'none';
   if (!waiting) waitingChallengeTargetId = null;
+  updateBoardMicButtons();
 }
 
 function cancelWaitingChallenge() {
-  if (!isWaitingForOpponent || !currentRoomCode) return;
+  // Waiting without a room only happens while Quick Match is searching / starting.
+  if (!currentRoomCode) { if (isWaitingForOpponent || quickMatch) cancelQuickMatch(); return; }
+  if (!isWaitingForOpponent) return;
   const code = currentRoomCode;
   const targetId = waitingChallengeTargetId;
   selfCancellingChallenge = true;
@@ -621,6 +692,8 @@ function cancelWaitingChallenge() {
 }
 
 function cleanupFriendGame(resetMode = true) {
+  stopQuickMatchSearch();
+  endQuickBotGame();
   setWaitingForOpponent(false);
   stopFriendClock();
   if (friendRoomListenerRef) { friendRoomListenerRef.off(); friendRoomListenerRef = null; }
@@ -628,7 +701,11 @@ function cleanupFriendGame(resetMode = true) {
   try { if (peerConnection) peerConnection.close(); } catch (_) {}
   peerConnection = null;
   audioTransceiver = null;
+  try { if (localVoiceStream) localVoiceStream.getTracks().forEach(t => t.stop()); } catch (_) {}
   localVoiceStream = null;
+  isMicMuted = true;
+  renderMicControls(false);
+  boardPlayerInfo = null;
   currentRoomCode = null;
   isOnlineMatchActive = false;
   friendTimeControl = 0;
@@ -738,6 +815,8 @@ function updateFriendPlayerLabels(roomValue) {
   if (!roomValue) return;
   const white = { name: roomValue.creatorName || 'White', rating: Number(roomValue.creatorRating || 800) };
   const black = { name: roomValue.guestName || 'Waiting...', rating: Number(roomValue.guestRating || 800) };
+  if (currentRoomCode) boardPlayerInfo = { w: white, b: black };
+  updateBoardMicButtons();
   const topIsWhite = board.orientation() === 'black';
   const top = topIsWhite ? white : black;
   const bottom = topIsWhite ? black : white;
@@ -817,7 +896,13 @@ function showFriendMatchResult(roomValue, code) {
   const closeResultBtn = document.getElementById('resultCloseBtn');
   if (closeResultBtn) closeResultBtn.onclick = closeResultAndExitRoom;
   if (reviewBtn) reviewBtn.onclick = () => { panel.style.display='none'; document.querySelector('[data-tab="reviewTab"]')?.click(); };
-  if (rematchBtn) rematchBtn.onclick = () => { panel.style.display='none'; cleanupFriendGame(true); if (friendResultData.opponentId) sendChallenge(friendResultData.opponentId, friendResultData.opponentName, friendResultData.timeControl); };
+  if (rematchBtn) rematchBtn.onclick = () => {
+    panel.style.display='none';
+    const quickTc = roomValue.quickMatch ? friendResultData.timeControl : null;
+    cleanupFriendGame(true);
+    if (quickTc) beginQuickMatchSearch(quickTc);
+    else if (friendResultData.opponentId) sendChallenge(friendResultData.opponentId, friendResultData.opponentName, friendResultData.timeControl);
+  };
   if (friendsBtn) friendsBtn.onclick = () => { panel.style.display='none'; cleanupFriendGame(true); openFriendsModal('friends'); };
 }
 
@@ -843,37 +928,149 @@ function closeFriendMatchResult() {
   if (panel) panel.style.display = 'none';
 }
 
+// Browsers only allow the permission prompt after a user gesture.
+function ensureNotificationPermission() {
+  if (!('Notification' in window) || Notification.permission !== 'default') return;
+  try { const p = Notification.requestPermission(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+}
+
+function challengeMessageText(c) {
+  return c.message || ((c.fromName || 'Player') + ' challenged you to a ' + (c.timeLabel || friendTimeLabel(c.timeControl)) + ' game!');
+}
+
+function challengeAvatarHtml(c) {
+  return c.fromPhoto ? `<img src="${escapeHtml(c.fromPhoto)}" alt="" class="challenge-avatar">` : `<span class="challenge-avatar-fallback">${escapeHtml((c.fromName||'P').charAt(0).toUpperCase())}</span>`;
+}
+
 function startChallengeNotifications() {
   if (!currentUserId) return;
   if (challengeListenerRef) challengeListenerRef.off();
   challengeListenerRef = database.ref('users/' + currentUserId + '/challenges');
+  document.addEventListener('pointerdown', ensureNotificationPermission, { once: true });
 
-  // Keep the existing in-app challenge UI, but also surface a native mobile/browser
-  // notification immediately when a new challenge arrives. No existing game UI is changed.
-  if ('Notification' in window && Notification.permission === 'default') {
-    try { Notification.requestPermission().catch(() => {}); } catch (e) {}
-  }
+  // Every new challenge is shown at once as an in-app pop-up, plus a native
+  // browser/PWA notification when the page is in the background.
   challengeListenerRef.on('child_added', snap => {
     const c = snap.val() || {};
     const code = snap.key;
-    const title = '♟ New Chess Challenge';
-    const body = (c.fromName || 'Player') + ' (Elo ' + Number(c.fromRating || 800) + ') challenged you — ' + (c.timeLabel || friendTimeLabel(c.timeControl));
-    if ('Notification' in window && Notification.permission === 'granted') {
-      try {
-        const n = new Notification(title, { body, tag: 'bchess-challenge-' + code, renotify: true });
-        n.onclick = function () {
-          try { window.focus(); } catch (e) {}
-          const box = document.getElementById('challengeNotificationBox');
-          if (box) box.style.display = 'block';
-          renderChallengeNotifications();
-          try { n.close(); } catch (e) {}
-        };
-      } catch (e) {}
-    }
+    // Drop challenges whose room was cancelled or already used while we were away.
+    database.ref('rooms/' + code).once('value').then(roomSnap => {
+      const room = roomSnap.val();
+      if (!room || room.gameOver || room.guestId || (c.fromId && room.creatorId !== c.fromId)) {
+        snap.ref.remove().catch(() => {});
+        return;
+      }
+      announceChallenge(code, c);
+    }).catch(() => announceChallenge(code, c));
   });
   challengeListenerRef.on('value', snap => {
     challengeNotificationMap = snap.val() || {};
     renderChallengeNotifications();
+    if (challengeToastCode && !challengeNotificationMap[challengeToastCode]) hideChallengeToast();
+    processChallengeDeepLink(true);
+  });
+}
+
+function announceChallenge(code, c) {
+  if (currentRoomCode === code) return;
+  showChallengeToast(code, c);
+  playSound('check');
+  try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch (e) {}
+  showNativeChallengeNotification(code, c);
+}
+
+function showNativeChallengeNotification(code, c) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (document.visibilityState === 'visible' && document.hasFocus()) return; // the in-app pop-up is already visible
+  const title = '♟ New Chess Challenge';
+  const body = challengeMessageText(c) + '\n' + (c.fromName || 'Player') + ' • ' + Number(c.fromRating || 800) + ' Elo • ' + (c.timeLabel || friendTimeLabel(c.timeControl));
+  const tag = 'bchess-challenge-' + code;
+  const fallback = () => {
+    try {
+      const n = new Notification(title, { body, tag, icon: 'icons/icon-192.png' });
+      n.onclick = () => { try { window.focus(); } catch (e) {} handleChallengeDeepLink(code, null); try { n.close(); } catch (e) {} };
+    } catch (e) {}
+  };
+  // Android Chrome / installed PWAs only allow notifications through the service worker.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistration().then(reg => {
+      if (!reg) return fallback();
+      return reg.showNotification(title, {
+        body, tag, renotify: true, requireInteraction: true,
+        icon: 'icons/icon-192.png', badge: 'icons/icon-192.png',
+        data: { type: 'bchess-challenge', code },
+        actions: [{ action: 'accept', title: '✓ Accept' }, { action: 'decline', title: '✕ Decline' }]
+      });
+    }).catch(fallback);
+  } else {
+    fallback();
+  }
+}
+
+function showChallengeToast(code, c) {
+  const toast = document.getElementById('challengeToast');
+  if (!toast) return;
+  challengeToastCode = code;
+  toast.innerHTML = `
+    <div class="challenge-notification-title">♟ New Challenge</div>
+    <div class="challenge-notification-list">
+      <div class="challenge-notification-row"><div class="challenge-profile">${challengeAvatarHtml(c)}<div><strong>${escapeHtml(c.fromName||'Player')}</strong><small>${Number(c.fromRating||800)} Elo • ${escapeHtml(c.timeLabel||friendTimeLabel(c.timeControl))}</small></div></div></div>
+      <div class="challenge-toast-msg">${escapeHtml(challengeMessageText(c))}</div>
+      <div class="challenge-toast-actions">
+        <button type="button" class="challenge-accept-btn" id="challengeToastAcceptBtn">✓ Accept</button>
+        <button type="button" class="challenge-decline-btn" id="challengeToastDeclineBtn">✕ Decline</button>
+      </div>
+    </div>`;
+  toast.style.display = 'block';
+  document.getElementById('challengeToastAcceptBtn').onclick = () => acceptChallengeNotification(code);
+  document.getElementById('challengeToastDeclineBtn').onclick = () => declineChallengeNotification(code);
+}
+
+function hideChallengeToast() {
+  challengeToastCode = null;
+  const toast = document.getElementById('challengeToast');
+  if (toast) toast.style.display = 'none';
+}
+
+// Tapping a browser notification (or its Accept / Decline action) lands here.
+function handleChallengeDeepLink(code, action) {
+  if (!code) return;
+  pendingChallengeDeepLink = { code: String(code), action: action || null };
+  processChallengeDeepLink(false);
+}
+
+function processChallengeDeepLink(listLoaded) {
+  const link = pendingChallengeDeepLink;
+  if (!link || !currentUserId) return;
+  const c = challengeNotificationMap[link.code];
+  if (!c) {
+    if (listLoaded) { pendingChallengeDeepLink = null; alert('This challenge is no longer available.'); }
+    return;
+  }
+  pendingChallengeDeepLink = null;
+  if (link.action === 'accept') acceptChallengeNotification(link.code);
+  else if (link.action === 'decline') declineChallengeNotification(link.code);
+  else showChallengeToast(link.code, c);
+}
+
+(function readChallengeDeepLinkFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('challenge');
+  if (!code) return;
+  pendingChallengeDeepLink = { code, action: params.get('challengeAction') || null };
+  params.delete('challenge');
+  params.delete('challengeAction');
+  const qs = params.toString();
+  try { history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash); } catch (e) {}
+})();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const d = event.data || {};
+    if (d.type === 'bchess-challenge') {
+      try { window.focus(); } catch (e) {}
+      handleChallengeDeepLink(d.code, d.action);
+    }
   });
 }
 
@@ -885,7 +1082,7 @@ function renderChallengeNotifications() {
   if (!list) return;
   list.innerHTML = ids.length ? ids.map(code => {
     const c = challengeNotificationMap[code] || {};
-    const avatar = c.fromPhoto ? `<img src="${escapeHtml(c.fromPhoto)}" alt="" class="challenge-avatar">` : `<span class="challenge-avatar-fallback">${escapeHtml((c.fromName||'P').charAt(0).toUpperCase())}</span>`;
+    const avatar = challengeAvatarHtml(c);
     return `<div class="challenge-notification-row"><div class="challenge-profile">${avatar}<div><strong>${escapeHtml(c.fromName||'Player')}</strong><small>${Number(c.fromRating||800)} Elo • ${escapeHtml(c.timeLabel||friendTimeLabel(c.timeControl))}</small></div></div><div class="challenge-actions"><button class="challenge-accept-btn" data-code="${escapeHtml(code)}">✓</button><button class="challenge-decline-btn" data-code="${escapeHtml(code)}">×</button></div></div>`;
   }).join('') : '<div class="friend-empty">No new challenges.</div>';
   list.querySelectorAll('.challenge-accept-btn').forEach(btn => btn.onclick = () => acceptChallengeNotification(btn.dataset.code));
@@ -893,6 +1090,7 @@ function renderChallengeNotifications() {
 }
 
 function openChallengeNotifications() {
+  ensureNotificationPermission();
   const box = document.getElementById('challengeNotificationBox');
   if (box) { box.style.display = box.style.display === 'block' ? 'none' : 'block'; renderChallengeNotifications(); }
 }
@@ -900,14 +1098,19 @@ function openChallengeNotifications() {
 function acceptChallengeNotification(code) {
   const challenge = challengeNotificationMap[code];
   if (!challenge) return;
-  if (currentRoomCode) return alert('You are already in a game.');
+  if (quickMatch && !currentRoomCode) cancelQuickMatch();
+  if (currentRoomCode || (quickBot && !quickBot.over)) return alert('You are already in a game.');
+  if (quickBot) cleanupFriendGame(false);
+  hideChallengeToast();
   database.ref('users/' + currentUserId + '/challenges/' + code).remove();
   document.getElementById('challengeNotificationBox').style.display = 'none';
+  if (currentMode !== 'friend') setGameMode('friend');
   document.getElementById('roomCodeInput').value = code;
   joinFriendRoom();
 }
 
 function declineChallengeNotification(code) {
+  if (challengeToastCode === code) hideChallengeToast();
   database.ref('users/' + currentUserId + '/challenges/' + code).remove();
   // Remove the pending room so the challenger is not left waiting forever.
   database.ref('rooms/' + code).transaction((cur) => {
@@ -999,9 +1202,9 @@ function loadFriendsData() {
     if (!ids.length) { list.innerHTML='<div class="friend-empty">No friends yet. Search a username above.</div>'; return; }
     list.innerHTML=ids.map(id => {
       const f=data[id]||{};
-      return `<div class="friend-row"><div><strong>${escapeHtml(f.username||'Player')}</strong><small>${Number(f.rating||800)} Elo</small></div><div><button class="pill-btn friend-challenge-btn" data-id="${id}" data-name="${escapeHtml(f.username||'Player')}">♟ Challenge</button></div></div>`;
+      return `<div class="friend-row"><div><strong>${escapeHtml(f.username||'Player')}</strong><small>${Number(f.rating||800)} Elo</small></div><div><button class="pill-btn friend-challenge-btn" data-id="${id}" data-name="${escapeHtml(f.username||'Player')}" data-rating="${Number(f.rating||800)}">♟ Challenge</button></div></div>`;
     }).join('');
-    list.querySelectorAll('.friend-challenge-btn').forEach(btn => btn.addEventListener('click',()=>sendChallenge(btn.dataset.id, btn.dataset.name)));
+    list.querySelectorAll('.friend-challenge-btn').forEach(btn => btn.addEventListener('click',()=>sendChallenge(btn.dataset.id, btn.dataset.name, null, Number(btn.dataset.rating) || null)));
   });
 }
 
@@ -1050,16 +1253,22 @@ function loadFriendRequests() {
   database.ref('users/'+currentUserId+'/friendRequests/outgoing').once('value').then(s=>{const d=s.val()||{}; const ids=Object.keys(d); outgoing.innerHTML=ids.length?ids.map(id=>`<div class="friend-row"><div><strong>${escapeHtml(d[id].toName||'Player')}</strong><small>Request sent</small></div></div>`).join(''):'<div class="friend-empty">No sent requests.</div>';});
 }
 
-function sendChallenge(friendId, friendName, presetTime = null) {
+function sendChallenge(friendId, friendName, presetTime = null, friendRating = null) {
   if (!currentUserId) return;
-  if (currentRoomCode) return alert('You are already in a game.');
+  if (currentRoomCode || quickMatch || (quickBot && !quickBot.over)) return alert('You are already in a game.');
+  // Close the Friends / profile windows so the "Challenge sent" status on the board is visible right away.
+  const launch = (seconds) => {
+    closeFriendsModal();
+    closePlayerProfile();
+    if (quickBot) cleanupFriendGame(false);
+    if (currentMode !== 'friend') setGameMode('friend');
+    createFriendRoomWithTime(Number(seconds) || 0, friendId, friendName, friendRating);
+  };
   if (presetTime !== null && presetTime !== undefined) {
-    createFriendRoomWithTime(Number(presetTime) || 0, friendId, friendName);
+    launch(presetTime);
     return;
   }
-  showFriendTimeModal((seconds)=>{
-    createFriendRoomWithTime(seconds, friendId, friendName);
-  });
+  showFriendTimeModal(launch);
 }
 
 // Optional challenge metadata is stored on the opponent profile; room creation itself remains unchanged.
@@ -1099,6 +1308,12 @@ function checkOnlineTrigger(move) {
 }
 
 function resignGame() {
+  if (quickBot && !currentRoomCode) {
+    if (quickBot.over) return;
+    if (!confirm("Are you sure you want to resign? (-8 Rating)")) return;
+    finishQuickBotGame('resigned', quickBot.botColor);
+    return;
+  }
   if (!currentRoomCode) return alert("Not in an active match!");
   if (!confirm("Are you sure you want to resign? (-8 Rating)")) return;
 
@@ -1120,6 +1335,17 @@ function resignGame() {
 }
 
 function offerDrawGame() {
+  if (quickBot && !currentRoomCode) {
+    if (quickBot.over) return;
+    alert("Draw offer sent to opponent.");
+    const qb = quickBot;
+    setTimeout(() => {
+      if (quickBot !== qb || qb.over) return;
+      const opponentEdge = (qb.botColor === 'w' ? 1 : -1) * currentPositionCp;
+      if (game.history().length >= 20 && opponentEdge < 60) finishQuickBotGame('draw', null);
+    }, 1500 + Math.random() * 2000);
+    return;
+  }
   if (!currentRoomCode) return alert("Not in an active match!");
   database.ref("rooms/" + currentRoomCode + "/drawOffer").set(currentUserId);
   alert("Draw offer sent to opponent.");
@@ -1130,6 +1356,15 @@ function handleSendChat(e) {
   e.preventDefault();
   const input = document.getElementById("chatInput");
   const text = input.value.trim();
+  if (text && quickBot && !currentRoomCode) {
+    const box = document.getElementById("chatMessages");
+    const bubble = document.createElement("div");
+    bubble.className = 'chat-bubble mine';
+    bubble.innerHTML = `<span class="chat-bubble-author">${escapeHtml(currentUserName)}</span><span class="chat-bubble-text">${escapeHtml(text)}</span>`;
+    if (box) { box.appendChild(bubble); box.scrollTop = box.scrollHeight; }
+    input.value = "";
+    return;
+  }
   if (!text || !currentRoomCode) return;
 
   database.ref("rooms/" + currentRoomCode + "/chat").push({
@@ -1473,15 +1708,64 @@ async function startVoiceChat(roomId, isCaller) {
   }
 }
 
+// Live voice status: the existing voice row + the small mic buttons beside the player names.
+function renderMicControls(on) {
+  const micBtn = document.getElementById("toggleMicBtn");
+  const dot = document.getElementById("voiceStatusDot");
+  const txt = document.getElementById("voiceStatusText");
+  if (on) {
+    if (micBtn) { micBtn.textContent = "🔴 Mute"; micBtn.classList.add("active-mic"); }
+    if (dot) dot.className = "voice-dot on";
+    if (txt) { txt.textContent = "Live Voice: ON"; txt.style.color = "#34d399"; }
+  } else {
+    if (micBtn) { micBtn.textContent = "🎙️ Turn Mic ON"; micBtn.classList.remove("active-mic"); }
+    if (dot) dot.className = "voice-dot off";
+    if (txt) { txt.textContent = "Live Voice: OFF"; txt.style.color = "#94a3b8"; }
+  }
+  updateBoardMicButtons();
+}
+
+// Each player bar gets a mic button. Your own bar toggles your microphone;
+// the opponent's bar shows their live ON/OFF status (synced through rooms/{code}/mic).
+function updateBoardMicButtons() {
+  const topBtn = document.getElementById('topMicBtn');
+  const bottomBtn = document.getElementById('bottomMicBtn');
+  if (!topBtn || !bottomBtn) return;
+  const inRoom = currentMode === 'friend' && currentRoomCode && friendRoomData && friendRoomData.guestId && !isWaitingForOpponent;
+  const active = inRoom || !!quickBot;
+  if (!active || !board) { topBtn.style.display = 'none'; bottomBtn.style.display = 'none'; return; }
+  const topColor = board.orientation() === 'black' ? 'w' : 'b';
+  const myColor = quickBot ? quickBot.myColor : myOnlineColor;
+  let opponentOn = false;
+  if (!quickBot && friendRoomData && friendRoomData.mic) {
+    const opponentId = friendRoomData.creatorId === currentUserId ? friendRoomData.guestId : friendRoomData.creatorId;
+    opponentOn = !!friendRoomData.mic[opponentId];
+  }
+  const myOn = quickBot ? !!quickBot.micOn : !isMicMuted;
+  [[topBtn, topColor], [bottomBtn, topColor === 'w' ? 'b' : 'w']].forEach(([btn, color]) => {
+    const mine = color === myColor;
+    const on = mine ? myOn : opponentOn;
+    btn.style.display = 'inline-flex';
+    btn.disabled = !mine;
+    btn.classList.toggle('mine', mine);
+    btn.classList.toggle('on', on);
+    btn.textContent = on ? '🎙️ ON' : '🔇 OFF';
+    btn.title = mine ? (on ? 'Your microphone is ON — tap to turn it OFF' : 'Your microphone is OFF — tap to turn it ON')
+                     : (on ? "Opponent's microphone is ON" : "Opponent's microphone is OFF");
+    btn.setAttribute('aria-label', btn.title);
+  });
+}
+
 async function toggleMicrophone() {
+  if (quickBot && !currentRoomCode) {
+    quickBot.micOn = !quickBot.micOn;
+    renderMicControls(quickBot.micOn);
+    return;
+  }
   if (!currentRoomCode) {
     alert("Please create or join a room first.");
     return;
   }
-
-  const micBtn = document.getElementById("toggleMicBtn");
-  const dot = document.getElementById("voiceStatusDot");
-  const txt = document.getElementById("voiceStatusText");
 
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1518,15 +1802,8 @@ async function toggleMicrophone() {
       audio.play().catch(() => {});
     }
 
-    if (!isMicMuted) {
-      if (micBtn) { micBtn.textContent = "🔴 Mute"; micBtn.classList.add("active-mic"); }
-      if (dot) dot.className = "voice-dot on";
-      if (txt) { txt.textContent = "Live Voice: ON"; txt.style.color = "#34d399"; }
-    } else {
-      if (micBtn) { micBtn.textContent = "🎙️ Turn Mic ON"; micBtn.classList.remove("active-mic"); }
-      if (dot) dot.className = "voice-dot off";
-      if (txt) { txt.textContent = "Live Voice: OFF"; txt.style.color = "#94a3b8"; }
-    }
+    renderMicControls(!isMicMuted);
+    database.ref("rooms/" + currentRoomCode + "/mic/" + currentUserId).set(!isMicMuted).catch(() => {});
   } catch (err) {
     console.error("Microphone error:", err);
     alert("Microphone access failed: " + err.message);
@@ -1854,7 +2131,7 @@ function setupStockfishListeners() {
       const pvMatch = line.match(/ pv ([a-h1-8qrbn\s]+)/);
 
       if (depthMatch) {
-        document.getElementById('depthVal').textContent = `${depthMatch[1]} / ${targetDepth}`;
+        if (!quickBot) document.getElementById('depthVal').textContent = `${depthMatch[1]} / ${targetDepth}`;
       }
 
       if (pvMatch) {
@@ -1867,7 +2144,7 @@ function setupStockfishListeners() {
             drawBestMoveArrow(topUci);
           }
         }
-        document.getElementById('pvLineText').textContent = `Engine Line: ${pvMoves.slice(0, 5).join(' → ')}`;
+        if (!quickBot) document.getElementById('pvLineText').textContent = `Engine Line: ${pvMoves.slice(0, 5).join(' → ')}`;
       }
 
       const turnMultiplier = game.turn() === 'w' ? 1 : -1;
@@ -1876,16 +2153,20 @@ function setupStockfishListeners() {
       if (mateMatch) {
         const mateRaw = parseInt(mateMatch[1], 10) * turnMultiplier;
         const mateText = `M${Math.abs(mateRaw)}`;
-        document.getElementById('evalScore').textContent = mateRaw > 0 ? `+${mateText}` : `-${mateText}`;
-        updateEvalBar(mateRaw > 0 ? 10 : -10, mateText);
+        if (!quickBot) {
+          document.getElementById('evalScore').textContent = mateRaw > 0 ? `+${mateText}` : `-${mateText}`;
+          updateEvalBar(mateRaw > 0 ? 10 : -10, mateText);
+        }
         newScoreCp = mateRaw > 0 ? 1500 : -1500;
       } else if (scoreMatch) {
         const cpWhite = (parseInt(scoreMatch[1], 10) * turnMultiplier) / 100;
         newScoreCp = parseInt(scoreMatch[1], 10) * turnMultiplier;
         const sign = cpWhite > 0 ? '+' : '';
         const formatted = `${sign}${cpWhite.toFixed(2)}`;
-        document.getElementById('evalScore').textContent = formatted;
-        updateEvalBar(cpWhite, `${sign}${cpWhite.toFixed(1)}`);
+        if (!quickBot) {
+          document.getElementById('evalScore').textContent = formatted;
+          updateEvalBar(cpWhite, `${sign}${cpWhite.toFixed(1)}`);
+        }
       }
 
       currentPositionCp = newScoreCp;
@@ -2075,12 +2356,18 @@ function analyzePosition() {
 }
 
 function requestBotMove() {
-  if (game.game_over() || !stockfish || !engineReady) return;
+  if (game.game_over() || (quickBot && quickBot.over)) return;
+  if (!stockfish || !engineReady) {
+    if (quickBot) playRandomQuickBotMove();
+    return;
+  }
   isBotThinking = true;
 
-  document.getElementById('bestMoveText').textContent = `Bot (${botRating}) is thinking...`;
-  document.getElementById('engineSubtext').textContent = 'Calculating response...';
-  document.getElementById('pvLineText').textContent = 'Bot turn in progress...';
+  if (!quickBot) {
+    document.getElementById('bestMoveText').textContent = `Bot (${botRating}) is thinking...`;
+    document.getElementById('engineSubtext').textContent = 'Calculating response...';
+    document.getElementById('pvLineText').textContent = 'Bot turn in progress...';
+  }
   document.getElementById('bestMoveArrow').setAttribute('visibility', 'hidden');
 
   const profile = BOT_PROFILES[botRating] || BOT_PROFILES[1400];
@@ -2106,7 +2393,7 @@ function requestBotMove() {
 }
 
 function executeBotMove(uci) {
-  if (!uci || uci === '(none)') {
+  if (!uci || uci === '(none)' || (quickBot && quickBot.over)) {
     isBotThinking = false;
     return;
   }
@@ -2123,6 +2410,7 @@ function executeBotMove(uci) {
     recordMoveQuality(move, beforeEval);
     handleMoveEffects(move);
     updateUI();
+    quickBotAfterMove();
   }
 }
 
@@ -2161,6 +2449,7 @@ function applyHumanMove(source, target, promotion = 'q') {
   recordMoveQuality(move, beforeEval);
   handleMoveEffects(move);
   updateUI();
+  quickBotAfterMove();
   checkBotTrigger();
   checkOnlineTrigger(move);
   return true;
@@ -2169,6 +2458,7 @@ function applyHumanMove(source, target, promotion = 'q') {
 // Drag & Drop Handlers
 function onDragStart(source, piece) {
   if (isWaitingForOpponent) return false;
+  if (quickBot && quickBot.over) return false;
   if (game.game_over()) return false;
   if (isBotThinking) return false;
 
@@ -2226,6 +2516,7 @@ function onSnapEnd() {
 // Universal Click & Touch handler for mobile & desktop
 function handleSquareClick(square) {
   if (isWaitingForOpponent) return;
+  if (quickBot && quickBot.over) return;
   if (game.game_over() || isBotThinking) return;
 
   if (selectedSquare) {
@@ -2390,11 +2681,22 @@ function updateCapturedPiecesDisplay() {
   const topList = isFlipped ? capturedFromBlack : capturedFromWhite;
   const bottomList = isFlipped ? capturedFromWhite : capturedFromBlack;
 
-  const topName = isFlipped ? 'White' : 'Black';
-  const bottomName = isFlipped ? 'Black' : 'White';
+  const barLabel = (color) => boardPlayerInfo && boardPlayerInfo[color]
+    ? `${boardPlayerInfo[color].name} • ${boardPlayerInfo[color].rating}`
+    : (color === 'w' ? 'White' : 'Black');
+  const topName = barLabel(isFlipped ? 'w' : 'b');
+  const bottomName = barLabel(isFlipped ? 'b' : 'w');
 
   document.getElementById('topPlayerName').textContent = topName;
   document.getElementById('bottomPlayerName').textContent = bottomName;
+
+  // Each clock stays in the bar of the player it belongs to.
+  const topBar = document.getElementById('topCapturedBar');
+  const bottomBar = document.getElementById('bottomCapturedBar');
+  const topClock = document.getElementById(isFlipped ? 'whiteClock' : 'blackClock');
+  const bottomClock = document.getElementById(isFlipped ? 'blackClock' : 'whiteClock');
+  if (topClock && topClock.parentNode !== topBar) topBar.appendChild(topClock);
+  if (bottomClock && bottomClock.parentNode !== bottomBar) bottomBar.appendChild(bottomClock);
 
   document.getElementById('topCapturedBar').querySelector('.player-dot').className = `player-dot ${isFlipped ? 'white-dot' : 'black-dot'}`;
   document.getElementById('bottomCapturedBar').querySelector('.player-dot').className = `player-dot ${isFlipped ? 'black-dot' : 'white-dot'}`;
@@ -2424,6 +2726,7 @@ function updateCapturedPiecesDisplay() {
     if (isFlipped) bottomAdvEl.textContent = `+${Math.abs(diffMaterial)}`;
     else topAdvEl.textContent = `+${Math.abs(diffMaterial)}`;
   }
+  updateBoardMicButtons();
 }
 
 function updateGameReview() {
@@ -2528,11 +2831,13 @@ function renderMoveHistoryBadges() {
 }
 
 function checkBotTrigger() {
-  if (currentMode === 'bot' && !game.game_over()) {
+  if (currentMode === 'bot' && !game.game_over() && !(quickBot && quickBot.over)) {
     if (game.turn() !== playerColor) {
+      const token = quickBot;
       setTimeout(() => {
+        if (quickBot !== token || (quickBot && quickBot.over)) return;
         requestBotMove();
-      }, 250);
+      }, quickBot ? quickBotThinkDelay() : 250);
     }
   }
 }
@@ -2568,6 +2873,11 @@ function setGameMode(mode) {
   if (isOnlineMatchActive && mode !== 'friend') {
     alert("நண்பருடன் நேரலை மேட்ச் நடந்துகொண்டிருக்கிறது! விளையாடும் போது அனலைஸ் அல்லது பாட் மோடிற்கு மாற முடியாது.\n\nமேட்ச் முடிந்த பின், டிரா அல்லது ரிசைன் செய்த பிறகே பிற மோடுகளுக்கு மாற முடியும்.");
     return;
+  }
+
+  if (quickBot) {
+    if (!quickBot.over) { applyQuickBotChrome(); return; }
+    cleanupFriendGame(false);
   }
 
   currentMode = mode;
@@ -2788,6 +3098,7 @@ $(document).ready(function() {
         return triggerGoogleLogin();
       }
       if (!requireTermsAccepted()) return;
+      ensureNotificationPermission();
       setGameMode('friend');
     });
   }
@@ -2827,6 +3138,12 @@ $(document).ready(function() {
 
   const createBtn = document.getElementById('createRoomBtn');
   if (createBtn) createBtn.addEventListener('click', createFriendRoom);
+  const quickMatchBtn = document.getElementById('quickMatchBtn');
+  if (quickMatchBtn) quickMatchBtn.addEventListener('click', startQuickMatch);
+  ['topMicBtn', 'bottomMicBtn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', () => { if (!el.disabled) toggleMicrophone(); });
+  });
 
   document.querySelectorAll('.time-control-card').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2880,7 +3197,7 @@ $(document).ready(function() {
 
   // Undo Button
   document.getElementById('undoBtn').addEventListener('click', () => {
-    if (currentMode === 'friend') return;
+    if (currentMode === 'friend' || quickBot) return;
     if (isBotThinking) return;
     clearClickHighlights();
     selectedSquare = null;
@@ -2946,6 +3263,7 @@ $(document).ready(function() {
 
   // Reset Button
   document.getElementById('resetBtn').addEventListener('click', () => {
+    if (quickBot) return;
     clearClickHighlights();
     selectedSquare = null;
     moveQualityHistory = [];
@@ -3526,3 +3844,362 @@ $(document).ready(function() {
   // Leaving analysis or resetting ends the review so it never interferes with other modes
   ['modeBotBtn', 'modeFriendBtn', 'resetBtn'].forEach(id => b(id, closeOpeningReview));
 });
+
+// =====================================================================
+// QUICK MATCH - random online opponent with a similar Elo + same time control.
+// Queue: matchmaking/{timeControl}/{uid}. A matched pair plays through the
+// normal rooms/{code} flow (same board, clocks, chat, voice and results).
+// If nobody suitable is online in time, the game starts against the engine
+// presented as a regular opponent.
+// =====================================================================
+const QUICK_MATCH_SEARCH_MS = 25000;   // then fall back to the engine opponent
+const QUICK_MATCH_TICK_MS = 2000;
+const QUICK_MATCH_STALE_MS = 12000;    // queue entries not refreshed for this long are offline
+const QUICK_MATCH_JOIN_WAIT_MS = 12000;
+const QUICK_BOT_NAMES = [
+  'Arjun_Chess', 'KnightMaster', 'RapidKing', 'ChessBlaze', 'RookHunter', 'PawnStorm', 'BishopPilot',
+  'CastleCrusher', 'TacticTiger', 'EndgameEagle', 'SicilianSam', 'BlitzBaron', 'ForkFury', 'PinMaster',
+  'MidnightRook', 'SilentKnight', 'Vikram_Moves', 'QueenSideQueen', 'GambitGuru', 'Karthik64'
+];
+
+function quickMatchRange(elapsed) {
+  if (elapsed < 6000) return 50;
+  if (elapsed < 12000) return 100;
+  if (elapsed < 18000) return 200;
+  return 400;
+}
+
+function startQuickMatch() {
+  if (!currentUserId) {
+    alert('Please Sign in with Google first!');
+    return triggerGoogleLogin();
+  }
+  if (!requireTermsAccepted()) return;
+  ensureNotificationPermission();
+  if (currentRoomCode || quickMatch || (quickBot && !quickBot.over)) return alert('You are already in a game.');
+  showFriendTimeModal((seconds) => beginQuickMatchSearch(Number(seconds) || 600), { quick: true });
+}
+
+function beginQuickMatchSearch(tc, startedAt = Date.now()) {
+  if (!currentUserId) return;
+  if (quickBot) cleanupFriendGame(false);
+  closeFriendMatchResult();
+  if (currentMode !== 'friend') setGameMode('friend');
+  stopQuickMatchSearch();
+
+  game.reset();
+  redoStack = [];
+  moveQualityHistory = [];
+  board.orientation('white');
+  board.start();
+  updateUI();
+  lockModeButtons(true);
+
+  const entryRef = database.ref('matchmaking/' + tc + '/' + currentUserId);
+  quickMatch = { tc, startedAt, entryRef, tickTimer: null, busy: false };
+  setWaitingForOpponent(true);
+  renderQuickMatchSearching();
+
+  const now = firebase.database.ServerValue.TIMESTAMP;
+  entryRef.onDisconnect().remove();
+  entryRef.set({ uid: currentUserId, name: currentUserName, rating: currentUserRating, timeControl: tc, status: 'searching', createdAt: now, lastSeen: now })
+    .catch(err => console.warn('Quick Match queue unavailable:', err));
+  entryRef.on('value', snap => {
+    const e = snap.val();
+    if (!quickMatch || quickMatch.entryRef !== entryRef) return;
+    if (e && e.status === 'matched' && e.roomCode && e.matchedBy && e.matchedBy !== currentUserId) joinQuickMatchRoom(e);
+  });
+  quickMatch.tickTimer = setInterval(quickMatchTick, QUICK_MATCH_TICK_MS);
+  setTimeout(quickMatchTick, 400);
+}
+
+function renderQuickMatchSearching() {
+  if (!quickMatch) return;
+  const range = quickMatchRange(Date.now() - quickMatch.startedAt);
+  const r = Number(currentUserRating) || 800;
+  setWaitingDetails(
+    'Searching for opponent...',
+    '⚡ ' + friendTimeLabel(quickMatch.tc) + ' • Your Elo ' + r,
+    'Looking for online players rated ' + Math.max(100, r - range) + '–' + (r + range) + '...'
+  );
+}
+
+function quickMatchTick() {
+  if (!quickMatch) return;
+  if (Date.now() - quickMatch.startedAt >= QUICK_MATCH_SEARCH_MS && !quickMatch.busy) {
+    startQuickBotGame(quickMatch.tc);
+    return;
+  }
+  renderQuickMatchSearching();
+  quickMatch.entryRef.update({ lastSeen: firebase.database.ServerValue.TIMESTAMP }).catch(() => {});
+  tryQuickMatchPair();
+}
+
+async function tryQuickMatchPair() {
+  const qm = quickMatch;
+  if (!qm || qm.busy) return;
+  qm.busy = true;
+  let code = null;
+  try {
+    const tc = qm.tc;
+    const myRating = Number(currentUserRating) || 800;
+    const range = quickMatchRange(Date.now() - qm.startedAt);
+    const serverNow = Date.now() + serverTimeOffset;
+    const snap = await database.ref('matchmaking/' + tc).once('value');
+    if (quickMatch !== qm) return;
+    const candidate = Object.values(snap.val() || {})
+      .filter(e => e && e.uid && e.uid !== currentUserId && e.status === 'searching'
+        && serverNow - Number(e.lastSeen || 0) < QUICK_MATCH_STALE_MS
+        && Math.abs((Number(e.rating) || 800) - myRating) <= range)
+      .sort((a, b) => Math.abs((Number(a.rating) || 800) - myRating) - Math.abs((Number(b.rating) || 800) - myRating))[0];
+    if (!candidate) return;
+
+    // Lock our own entry so nobody pairs with us while we pair with the candidate.
+    const mine = await qm.entryRef.transaction(cur => {
+      if (cur === null) return null;
+      if (cur.status !== 'searching') return;
+      return Object.assign({}, cur, { status: 'claiming' });
+    });
+    if (!mine.committed || !mine.snapshot.val() || mine.snapshot.val().status !== 'claiming' || quickMatch !== qm) return;
+
+    code = generateRoomCode();
+    await database.ref('rooms/' + code).set(buildRoomPayload(tc, { quickMatch: true }));
+    const claim = await database.ref('matchmaking/' + tc + '/' + candidate.uid).transaction(cur => {
+      if (cur === null) return null;
+      if (cur.status !== 'searching') return;
+      return Object.assign({}, cur, { status: 'matched', roomCode: code, matchedBy: currentUserId, matchedByName: currentUserName, matchedByRating: myRating });
+    });
+    const claimed = claim.committed && claim.snapshot.val() && claim.snapshot.val().matchedBy === currentUserId && claim.snapshot.val().roomCode === code;
+    if (claimed && quickMatch === qm) {
+      startQuickMatchAsCreator(code, tc, claim.snapshot.val(), qm.startedAt);
+      code = null;
+      return;
+    }
+    if (claimed) {
+      // We were cancelled meanwhile: release the opponent back to the queue.
+      database.ref('matchmaking/' + tc + '/' + candidate.uid).transaction(cur =>
+        (cur && cur.roomCode === code) ? Object.assign({}, cur, { status: 'searching', roomCode: null, matchedBy: null }) : cur).catch(() => {});
+    }
+    if (quickMatch === qm) {
+      await qm.entryRef.transaction(cur => (cur && cur.status === 'claiming') ? Object.assign({}, cur, { status: 'searching' }) : cur);
+    }
+  } catch (err) {
+    console.warn('Quick Match pairing skipped:', err);
+  } finally {
+    if (code) database.ref('rooms/' + code).remove().catch(() => {});
+    qm.busy = false;
+  }
+}
+
+function startQuickMatchAsCreator(code, tc, opponent, searchStartedAt) {
+  stopQuickMatchSearch();
+  prepareCreatorRoomState(code, tc, opponent.uid, opponent.name);
+  setWaitingForOpponent(true);
+  setWaitingDetails('Opponent found!', (opponent.name || 'Player') + ' • ' + (Number(opponent.rating) || 800) + ' Elo • ' + friendTimeLabel(tc), 'Starting match...');
+  activateCreatorRoom(code);
+  // If the opponent never arrives (closed the app), go back to searching.
+  setTimeout(() => {
+    if (currentRoomCode !== code || !isWaitingForOpponent) return;
+    selfCancellingChallenge = true;
+    database.ref('rooms/' + code).transaction(cur => (cur && cur.guestId) ? undefined : null).then(res => {
+      if (res.committed && currentRoomCode === code) {
+        cleanupFriendGame(false);
+        beginQuickMatchSearch(tc, searchStartedAt);
+      }
+    }).catch(() => {}).finally(() => { selfCancellingChallenge = false; });
+  }, QUICK_MATCH_JOIN_WAIT_MS);
+}
+
+function joinQuickMatchRoom(entry) {
+  const tc = quickMatch.tc;
+  const startedAt = quickMatch.startedAt;
+  stopQuickMatchSearch();
+  setWaitingDetails('Opponent found!', (entry.matchedByName || 'Player') + ' • ' + (Number(entry.matchedByRating) || 800) + ' Elo • ' + friendTimeLabel(tc), 'Starting match...');
+  joinFriendRoom(entry.roomCode, () => {
+    cleanupFriendGame(false);
+    beginQuickMatchSearch(tc, startedAt);
+  });
+}
+
+function stopQuickMatchSearch() {
+  if (!quickMatch) return;
+  const qm = quickMatch;
+  quickMatch = null;
+  clearInterval(qm.tickTimer);
+  qm.entryRef.off();
+  try { qm.entryRef.onDisconnect().cancel(); } catch (_) {}
+  qm.entryRef.remove().catch(() => {});
+}
+
+function cancelQuickMatch() {
+  stopQuickMatchSearch();
+  cleanupFriendGame(false);
+}
+
+// ---------- Fallback opponent (engine shown as a regular Quick Match player) ----------
+function startQuickBotGame(tc) {
+  stopQuickMatchSearch();
+  let name = QUICK_BOT_NAMES[Math.floor(Math.random() * QUICK_BOT_NAMES.length)];
+  if (Math.random() < 0.4) name += Math.floor(10 + Math.random() * 89);
+  const rating = Math.max(100, Math.round((Number(currentUserRating) || 800) + (Math.random() * 100 - 50)));
+  setWaitingDetails('Opponent found!', name + ' • ' + rating + ' Elo • ' + friendTimeLabel(tc), 'Starting match...');
+  setTimeout(() => {
+    if (!isWaitingForOpponent || currentRoomCode || quickMatch) return; // cancelled or replaced meanwhile
+    launchQuickBotGame(tc, name, rating);
+  }, 1200);
+}
+
+function launchQuickBotGame(tc, name, rating) {
+  const myColor = Math.random() < 0.5 ? 'w' : 'b';
+  setWaitingForOpponent(false);
+  lockModeButtons(false);
+  setGameMode('bot');
+  botRating = Object.keys(BOT_PROFILES).map(Number)
+    .reduce((best, r) => Math.abs(r - rating) < Math.abs(best - rating) ? r : best, 1400);
+  playerColor = myColor;
+  myOnlineColor = myColor;
+  quickBot = {
+    code: generateRoomCode(), tc, name, rating, myColor,
+    botColor: myColor === 'w' ? 'b' : 'w',
+    botId: 'qm_' + name.toLowerCase(),
+    clock: { w: tc, b: tc, turn: 'w', startedAt: Date.now() },
+    interval: null, micOn: false, over: false
+  };
+
+  game.reset();
+  redoStack = [];
+  moveQualityHistory = [];
+  selectedSquare = null;
+  isBotThinking = false;
+  clearClickHighlights();
+  clearHighlights();
+  const me = { name: currentUserName, rating: currentUserRating };
+  const opp = { name, rating };
+  boardPlayerInfo = myColor === 'w' ? { w: me, b: opp } : { w: opp, b: me };
+  board.orientation(myColor === 'w' ? 'white' : 'black');
+  board.start();
+  friendTimeControl = tc;
+  resetFriendClockUI();
+  const chatBox = document.getElementById('chatMessages');
+  if (chatBox) chatBox.innerHTML = '';
+  renderMicControls(false);
+  applyQuickBotChrome();
+  lockModeButtons(true);
+  updateEvalBar(0, '0.0');
+  document.getElementById('evalScore').textContent = '+0.00';
+  document.getElementById('bestMoveText').textContent = 'Match started';
+  document.getElementById('engineSubtext').textContent = `${currentUserName} vs ${name} • ${friendTimeLabel(tc)}`;
+  document.getElementById('pvLineText').textContent = 'Good luck!';
+  updateGameReview();
+  updateUI();
+  quickBot.interval = setInterval(renderQuickBotClock, 250);
+  renderQuickBotClock();
+  if (quickBot.botColor === 'w') checkBotTrigger();
+}
+
+// Same screen as an online friend match (room bar, clocks, chat, mic) - no bot controls.
+function applyQuickBotChrome() {
+  if (!quickBot) return;
+  const el = (id) => document.getElementById(id);
+  if (el('botControls')) el('botControls').style.display = 'none';
+  if (el('friendControls')) el('friendControls').style.display = 'flex';
+  if (el('activeRoomInfo')) el('activeRoomInfo').style.display = 'flex';
+  if (el('activeRoomCode')) el('activeRoomCode').textContent = quickBot.code;
+  ['undoBtn', 'redoBtn', 'resetBtn', 'playBestBtn'].forEach(id => { if (el(id)) el(id).style.display = 'none'; });
+  if (el('chatTabBtn')) el('chatTabBtn').style.display = 'inline-block';
+  if (el('chatOpponentName')) el('chatOpponentName').textContent = quickBot.name + ' (' + quickBot.rating + ')';
+  el('panelPrimaryLabel').textContent = 'Friend Match';
+  el('bestMoveArrow').setAttribute('visibility', 'hidden');
+  if (el('modeBotBtn')) el('modeBotBtn').classList.remove('active');
+  if (el('modeAnalyzeBtn')) el('modeAnalyzeBtn').classList.remove('active');
+  if (el('modeFriendBtn')) el('modeFriendBtn').classList.add('active');
+  updateTimeControlUI();
+  updateBoardMicButtons();
+}
+
+function quickBotThinkDelay() {
+  if (!quickBot) return 250;
+  if (quickBotTimeLeft(quickBot.botColor) < 20) return 250 + Math.random() * 400;
+  const base = game.history().length < 8 ? 400 : 900;
+  return base + Math.random() * (quickBot.tc <= 300 ? 1500 : 2800);
+}
+
+function playRandomQuickBotMove() {
+  const moves = game.moves({ verbose: true });
+  if (!moves.length) return;
+  const m = moves[Math.floor(Math.random() * moves.length)];
+  executeBotMove(m.from + m.to + (m.promotion || ''));
+}
+
+function quickBotTimeLeft(color) {
+  const c = quickBot.clock;
+  const elapsed = c.turn === color ? (Date.now() - c.startedAt) / 1000 : 0;
+  return Math.max(0, c[color] - elapsed);
+}
+
+function renderQuickBotClock() {
+  if (!quickBot || quickBot.over) return;
+  const turn = quickBot.clock.turn;
+  const w = quickBotTimeLeft('w');
+  const b = quickBotTimeLeft('b');
+  const wEl = document.getElementById('whiteClock');
+  const bEl = document.getElementById('blackClock');
+  if (wEl) { wEl.textContent = formatClock(w); wEl.classList.toggle('active-clock', turn === 'w'); wEl.classList.toggle('low-clock', w <= 10); }
+  if (bEl) { bEl.textContent = formatClock(b); bEl.classList.toggle('active-clock', turn === 'b'); bEl.classList.toggle('low-clock', b <= 10); }
+  if ((turn === 'w' ? w : b) <= 0) finishQuickBotGame('timeout', turn === 'w' ? 'b' : 'w');
+}
+
+// Called after every move (yours or the opponent's) in a fallback Quick Match.
+function quickBotAfterMove() {
+  if (!quickBot || quickBot.over) return;
+  const mover = quickBot.clock.turn;
+  quickBot.clock[mover] = quickBotTimeLeft(mover);
+  quickBot.clock.turn = game.turn();
+  quickBot.clock.startedAt = Date.now();
+  renderQuickBotClock();
+  if (game.in_checkmate()) finishQuickBotGame('checkmate', mover);
+  else if (game.game_over()) finishQuickBotGame('draw', null);
+}
+
+function finishQuickBotGame(result, winnerColor) {
+  if (!quickBot || quickBot.over) return;
+  const qb = quickBot;
+  qb.over = true;
+  clearInterval(qb.interval);
+  qb.interval = null;
+  isBotThinking = false;
+  try { if (stockfish) stockfish.postMessage('stop'); } catch (_) {}
+  ['whiteClock', 'blackClock'].forEach(id => { const c = document.getElementById(id); if (c) c.classList.remove('active-clock'); });
+
+  const me = { id: currentUserId, name: currentUserName, rating: currentUserRating };
+  const opp = { id: qb.botId, name: qb.name, rating: qb.rating };
+  const white = qb.myColor === 'w' ? me : opp;
+  const black = qb.myColor === 'w' ? opp : me;
+  const winnerId = winnerColor ? (winnerColor === 'w' ? white.id : black.id) : null;
+  // Same rating rule as online matches: checkmate / resignation move the rating by 8.
+  if ((result === 'checkmate' || result === 'resigned') && winnerId) {
+    const won = winnerId === currentUserId;
+    database.ref('users/' + currentUserId + '/rating').transaction(r => won ? (r || 800) + 8 : Math.max(100, (r || 800) - 8));
+  }
+  const roomValue = {
+    creatorId: white.id, creatorName: white.name, creatorRating: white.rating,
+    guestId: black.id, guestName: black.name, guestRating: black.rating,
+    result, winner: winnerId, timeControl: qb.tc, moveHistory: game.history(),
+    gameOver: true, quickMatch: true
+  };
+  saveFriendMatchHistory(roomValue, qb.code);
+  lockModeButtons(false);
+  showFriendMatchResult(roomValue, qb.code);
+}
+
+function endQuickBotGame() {
+  if (!quickBot) return;
+  clearInterval(quickBot.interval);
+  quickBot = null;
+  isBotThinking = false;
+  boardPlayerInfo = null;
+  document.getElementById('bestMoveText').textContent = '—';
+  document.getElementById('engineSubtext').textContent = '';
+  document.getElementById('pvLineText').textContent = '';
+  updateBoardMicButtons();
+}

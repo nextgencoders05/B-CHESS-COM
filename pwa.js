@@ -93,10 +93,11 @@
   if ('serviceWorker' in navigator &&
       (location.protocol === 'https:' || location.hostname === 'localhost')) {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js')
+      navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
         .then(reg => {
           // Pick up a new service worker version quickly after deployment.
           if (reg.waiting) reg.waiting.postMessage({type: 'SKIP_WAITING'});
+          reg.update().catch(() => {});
         })
         .catch(err => console.warn('Service worker registration failed:', err));
     });

@@ -3,9 +3,9 @@
 (function () {
   'use strict';
   var items = [
-    { id: 'modeAnalyzeBtn', ico: '🔍', label: 'Analyze' },
     { id: 'modeBotBtn',     ico: '🤖', label: 'Vs Bot' },
     { id: 'modeFriendBtn',  ico: '👥', label: 'Friend' },
+    { id: 'modeAnalyzeBtn', ico: '🔍', label: 'Analyze' },
     { id: 'modeBooksBtn',   ico: '📚', label: 'Books' }
   ];
   function init() {
